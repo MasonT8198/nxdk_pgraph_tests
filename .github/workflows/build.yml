@@ -13,17 +13,41 @@ on:
       - '.github/**'
       - '!.github/workflows/**'
       - 'README.md'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
+  CheckClangFormat:
+    name: Check clang-format
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            llvm-19
+      - name: Clone tree
+        uses: actions/checkout@v4
+      - name: Run clang-format
+        run: |
+          find src \
+              -iname "*.h" -o -iname "*.cpp" \
+              -exec clang-format -n -Werror {} \+;
+
   BuildISO:
     name: Build ISO
     runs-on: ubuntu-latest
     steps:
       - name: Clone tree
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
         with:
           submodules: recursive
           path: nxdk_pgraph_tests
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -35,27 +59,186 @@ jobs:
             libsdl2-image-dev \
             ninja-build
           pip3 install nv2a-vsh
+
       - name: Prewarm nxdk
         working-directory: nxdk_pgraph_tests
         run: bash ${GITHUB_WORKSPACE}/nxdk_pgraph_tests/prewarm-nxdk.sh
+
       - name: Compile
         run: |
           cd nxdk_pgraph_tests
           export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk_pgraph_tests/third_party/nxdk"
           cmake -B build \
                 -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_TOOLCHAIN_FILE="${NXDK_DIR}/share/toolchain-nxdk.cmake" \
-                -DENABLE_PROGRESS_LOG=ON \
-                -DDUMP_CONFIG_FILE=ON \
-                -DRUNTIME_CONFIG_PATH="e:/nxdk_pgraph_tests/pgraph_tests.cnf"
+                -DCMAKE_TOOLCHAIN_FILE="${NXDK_DIR}/share/toolchain-nxdk.cmake"
           cmake --build build -- -j$(grep -c processor /proc/cpuinfo)
-      - name: Create release
-        if: github.ref == 'refs/heads/main'
-        uses: "marvinpinto/action-automatic-releases@latest"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          repo_token: "${{ secrets.GITHUB_TOKEN }}"
-          automatic_release_tag: "latest"
+          name: nxdk_pgraph_tests_xiso.iso
+          path: nxdk_pgraph_tests/build/src/xiso/nxdk_pgraph_tests_xiso/nxdk_pgraph_tests_xiso.iso
+
+  CreateRelease:
+    needs: [ BuildISO ]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone tree
+        uses: actions/checkout@v4
+        with:
+          path: nxdk_pgraph_tests
+
+      - name: Calculate version
+        id: calculate-version
+        run: |
+          echo "version=$(date +'%Y-%m-%d_%H-%M-%S-%N')" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          custom_tag: ${{ steps.calculate-version.outputs.version }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nxdk_pgraph_tests_xiso.iso
+          path: .
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2.2.1
+        with:
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: "NV2A PGRAPH tests ${{ steps.tag_version.outputs.new_version }}"
           prerelease: false
-          title: "xiso containing pgraph tests"
+          draft: false
           files: |
-            build/xiso/nxdk_pgraph_tests_xiso/nxdk_pgraph_tests_xiso.iso
+            nxdk_pgraph_tests_xiso.iso
+
+  DeployDocs:
+    runs-on: ubuntu-latest
+    needs: [BuildISO]
+    steps:
+      - name: Clone tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Doxygen and Graphviz
+        run: sudo apt-get install doxygen graphviz
+      - name: Generate docs
+        run: cmake -S . -B build && cmake --build build --verbose -- doc
+      - name: Generate nxdk_pgrapg_tests_registry
+        run: python3 .github/scripts/summarize_test_suites.py xml
+      - name: Create 'pages_doxygen' branch
+        run: |
+          git fetch origin --no-recurse-submodules
+          git checkout main
+          git pull
+          git checkout pages_doxygen || git checkout -b pages_doxygen
+          git rebase main
+      - name: Add and commit documentation changes
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          git add docs/*
+          git add xml/*
+          git config --local user.email "$GITHUB_ACTOR+github-actions@users.noreply.github.com"
+          git config --local user.name "$GITHUB_ACTOR via action"
+          git commit -m "Update Doxygen documentation" || echo "No changes to commit"
+          git push --set-upstream origin pages_doxygen -f
+
+  BuildMacOS:
+    name: Build macOS
+    runs-on: macOS-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Clone tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: nxdk_pgraph_tests
+
+      - name: Install dependencies
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install \
+            cmake \
+            coreutils \
+            llvm@19 \
+            lld
+          export PIP_BREAK_SYSTEM_PACKAGES=1
+          pip3 install -r nxdk_pgraph_tests/requirements.txt
+
+      - name: Prewarm nxdk
+        working-directory: nxdk_pgraph_tests
+        run: |
+          export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+          bash ${GITHUB_WORKSPACE}/nxdk_pgraph_tests/prewarm-nxdk.sh
+
+      - name: Compile in dump mode
+        run: |
+          cd nxdk_pgraph_tests
+          # The default clang install will result in linker failures on macOS.
+          export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+          export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk_pgraph_tests/third_party/nxdk"
+          cmake -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_TOOLCHAIN_FILE="${NXDK_DIR}/share/toolchain-nxdk.cmake" \
+                -DDUMP_CONFIG_FILE=ON
+          cmake --build build -- -j
+
+      - name: Compile in run mode
+        run: |
+          cd nxdk_pgraph_tests
+          # The default clang install will result in linker failures on macOS.
+          export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+          export NXDK_DIR="${GITHUB_WORKSPACE}/nxdk_pgraph_tests/third_party/nxdk"
+          cmake -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_TOOLCHAIN_FILE="${NXDK_DIR}/share/toolchain-nxdk.cmake" \
+                -DDUMP_CONFIG_FILE=OFF
+          cmake --build build -- -j
+
+
+  TestMacOS:
+    name: Test macOS
+    runs-on: macOS-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Clone tree
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew install \
+            cmake \
+            coreutils \
+            llvm@19 \
+            lld
+
+      - name: Compile and test in dump mode
+        run: |
+          # The default clang install will result in linker failures on macOS.
+          export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+          cmake -B build-dump-mode \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DDUMP_CONFIG_FILE=ON
+          cmake --build build-dump-mode -- -j
+          cmake --build build-dump-mode --target test
+
+      - name: Compile and test in run mode
+        run: |
+          # The default clang install will result in linker failures on macOS.
+          export PATH="$(brew --prefix llvm@19)/bin:$PATH"
+          cmake -B build \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DDUMP_CONFIG_FILE=OFF
+          cmake --build build -- -j
+          cmake --build build --target test -- -j

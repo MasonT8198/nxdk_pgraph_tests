@@ -83,8 +83,8 @@ static const DotSTRTest kDotSTRTests[] = {
     {"DotSTRCube_HiLoHemi", 0x777},
 };
 
-TextureCubemapTests::TextureCubemapTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texture cubemap") {
+TextureCubemapTests::TextureCubemapTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Texture cubemap", config) {
   tests_[kCubemapTest] = [this]() { TestCubemap(); };
 
   for (auto &test : kDotSTRTests) {
@@ -100,7 +100,6 @@ void TextureCubemapTests::Initialize() {
                                                           0.0f, depth_buffer_max_value, M_PI * 0.25f, 1.0f, 200.0f);
   {
     shader->SetLightingEnabled(false);
-    shader->SetUse4ComponentTexcoords();
     shader->SetUseD3DStyleViewport();
     vector_t camera_position = {0.0f, 0.0f, -7.0f, 1.0f};
     vector_t camera_look_at = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -193,7 +192,7 @@ void TextureCubemapTests::TestCubemap() {
   pb_print("%s\n", kCubemapTest);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kCubemapTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kCubemapTest);
 }
 
 void TextureCubemapTests::TestDotSTRCubemap(const std::string &name, uint32_t dot_rgb_mapping) {
@@ -301,7 +300,7 @@ void TextureCubemapTests::TestDotSTRCubemap(const std::string &name, uint32_t do
   pb_print("%s\n", name.c_str());
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 static void GenerateCubemap(uint8_t *buffer) {

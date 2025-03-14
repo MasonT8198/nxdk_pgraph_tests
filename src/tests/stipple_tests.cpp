@@ -14,7 +14,7 @@ static std::string MakeTestName(bool stipple_enabled, const std::string &stipple
   return stipple_pattern_name + "_" + (stipple_enabled ? "On" : "Off");
 }
 
-static std::map<std::string, const std::vector<uint32_t>> kStipplePatterns = {
+static std::map<std::string, const std::vector<DWORD>> kStipplePatterns = {
     {"Zero", {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
     {"Border",
      {
@@ -39,8 +39,8 @@ static std::map<std::string, const std::vector<uint32_t>> kStipplePatterns = {
      }},
 };
 
-StippleTests::StippleTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Stipple tests") {
+StippleTests::StippleTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Stipple tests", config) {
   // Stipple patterns only take effect when enabled so there's just one test with stipple disabled.
   {
     const char *kPatternName = "Checkered";
@@ -206,14 +206,14 @@ static void Draw(TestHost &host, float x, float y) {
   }
 }
 
-void StippleTests::Test(const std::string &name, bool stipple_enable, const std::vector<uint32_t> &stipple_pattern) {
+void StippleTests::Test(const std::string &name, bool stipple_enable, const std::vector<DWORD> &stipple_pattern) {
   host_.PrepareDraw(0xFF202224);
 
   {
     auto p = pb_begin();
     p = pb_push1(p, NV097_SET_STIPPLE_ENABLE, stipple_enable);
     for (auto i = 0; i < NV097_SET_STIPPLE_PATERN_SIZE; i += 4) {
-      p = pb_push4v(p, NV097_SET_STIPPLE_PATERN + (i * 4), stipple_pattern.data() + i);
+      p = pb_push4v(p, NV097_SET_STIPPLE_PATERN_0 + (i * 4), stipple_pattern.data() + i);
     }
     pb_end(p);
   }
@@ -235,5 +235,5 @@ void StippleTests::Test(const std::string &name, bool stipple_enable, const std:
 
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }

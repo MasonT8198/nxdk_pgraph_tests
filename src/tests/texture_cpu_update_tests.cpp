@@ -17,8 +17,8 @@ static constexpr float kTextureSize = 256.0f;
 static constexpr char kRGBATest[] = "RGBA";
 // static constexpr char kPalettizedTest[] = "PaletteCycle";
 
-TextureCPUUpdateTests::TextureCPUUpdateTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texture CPU Update") {
+TextureCPUUpdateTests::TextureCPUUpdateTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Texture CPU Update", config) {
   tests_[kRGBATest] = [this]() { TestRGBA(); };
   //  tests_[kPalettizedTest] = [this]() { TestPalettized(); };
 }
@@ -73,7 +73,7 @@ void TextureCPUUpdateTests::TestRGBA() {
 
   host_.PrepareDraw(0xFE202020);
   Draw(host_);
-  host_.FinishDraw(false, output_dir_, kRGBATest);
+  host_.FinishDraw(false, output_dir_, suite_name_, kRGBATest);
 
   // Set the texture to pure green.
   texels = host_.GetTextureMemoryForStage(0);
@@ -92,7 +92,7 @@ void TextureCPUUpdateTests::TestRGBA() {
   pb_printat(7, 12, (char *)"Expect a green screen");
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kRGBATest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kRGBATest);
 }
 
 // This does not actually change the texture on HW
@@ -116,7 +116,7 @@ void TextureCPUUpdateTests::TestRGBA() {
 //  host_.PrepareDraw(0xFE212021);
 //
 //  Draw(host_);
-//  host_.FinishDraw(false, output_dir_, kPalettizedTest);
+//  host_.FinishDraw(false, output_dir_, suite_name_, kPalettizedTest);
 //
 //  palette[1] = 0xFF007700;
 //  Draw(host_);
@@ -126,5 +126,5 @@ void TextureCPUUpdateTests::TestRGBA() {
 //  pb_printat(7, 12, (char *)"Expect a green screen");
 //  pb_draw_text_screen();
 //
-//  host_.FinishDraw(allow_saving_, output_dir_, kPalettizedTest);
+//  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kPalettizedTest);
 //}

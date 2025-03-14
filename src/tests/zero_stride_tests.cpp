@@ -20,8 +20,8 @@ static constexpr float kBottom = -1.75f;
 static constexpr float kZFront = 1.0f;
 static constexpr float kZBack = 5.0f;
 
-ZeroStrideTests::ZeroStrideTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Zero stride") {
+ZeroStrideTests::ZeroStrideTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Zero stride", config) {
   for (const auto draw_mode : kDrawModes) {
     const std::string test_name = MakeTestName(draw_mode);
     auto test = [this, draw_mode]() { this->Test(draw_mode); };
@@ -111,7 +111,7 @@ void ZeroStrideTests::Test(DrawMode draw_mode) {
   pb_print("%s\n", name.c_str());
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 std::string ZeroStrideTests::MakeTestName(ZeroStrideTests::DrawMode draw_mode) {

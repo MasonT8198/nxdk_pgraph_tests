@@ -41,8 +41,8 @@ static constexpr char kTextureTarget[] = "FBToTexture";
 static constexpr char kZetaTarget[] = "FBToZetaAsTex";
 static constexpr char kRenderTextureTarget[] = "FBToOldRenderTarget";
 
-TextureFramebufferBlitTests::TextureFramebufferBlitTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texture Framebuffer Blit") {
+TextureFramebufferBlitTests::TextureFramebufferBlitTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Texture Framebuffer Blit", config) {
   tests_[kTextureTarget] = [this]() {
     auto offset = reinterpret_cast<uint32_t>(host_.GetTextureMemory());
     Test(offset, kTextureTarget);
@@ -323,5 +323,5 @@ void TextureFramebufferBlitTests::Test(uint32_t texture_destination, const char*
   pb_print("%s\n", test_name);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, test_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, test_name);
 }

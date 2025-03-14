@@ -315,8 +315,8 @@ static const VertexShaderSwizzleTests::Instruction kTestControl[] = {
 static constexpr uint32_t kCheckerboardA = 0xFF202020;
 static constexpr uint32_t kCheckerboardB = 0xFF000000;
 
-VertexShaderSwizzleTests::VertexShaderSwizzleTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Vertex shader swizzle tests") {
+VertexShaderSwizzleTests::VertexShaderSwizzleTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Vertex shader swizzle tests", config) {
   tests_["Control"] = [this]() { Test("Control", kTestControl, sizeof(kTestControl) / sizeof(kTestControl[0])); };
   tests_["ControlNA"] = [this]() {
     Test("ControlNA", kTestControl, sizeof(kTestControl) / sizeof(kTestControl[0]), true);
@@ -469,7 +469,7 @@ void VertexShaderSwizzleTests::Test(const std::string &name, const Instruction *
 
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 void VertexShaderSwizzleTests::DrawCheckerboardBackground() const {

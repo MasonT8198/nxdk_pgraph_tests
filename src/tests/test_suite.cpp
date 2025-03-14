@@ -1,10 +1,13 @@
 #include "test_suite.h"
 
+#include <chrono>
 #include <fstream>
+#include <sstream>
 
 #include "configure.h"
 #include "debug_output.h"
 #include "logger.h"
+#include "nxdk_ext.h"
 #include "pbkit_ext.h"
 #include "shaders/pixel_shader_program.h"
 #include "test_host.h"
@@ -14,10 +17,19 @@
 
 using namespace XboxMath;
 
+static constexpr char kFTPLogProgressFilename[] = "nxdk_pgraph_tests_progress.log";
+
 #define SET_MASK(mask, val) (((val) << (__builtin_ffs(mask) - 1)) & (mask))
 
-TestSuite::TestSuite(TestHost& host, std::string output_dir, std::string suite_name)
-    : host_(host), output_dir_(std::move(output_dir)), suite_name_(std::move(suite_name)), pgraph_diff_(false) {
+TestSuite::TestSuite(TestHost& host, std::string output_dir, std::string suite_name, const Config& config)
+    : host_(host),
+      output_dir_(std::move(output_dir)),
+      suite_name_(std::move(suite_name)),
+      pgraph_diff_(false, config.enable_progress_log),
+      enable_progress_log_{config.enable_progress_log},
+      enable_pgraph_region_diff_{config.enable_pgraph_region_diff},
+      delay_milliseconds_between_tests_{config.delay_milliseconds_between_tests},
+      ftp_logger_{config.ftp_logger} {
   output_dir_ += "\\";
   output_dir_ += suite_name_;
   std::replace(output_dir_.begin(), output_dir_.end(), ' ', '_');
@@ -33,7 +45,7 @@ std::vector<std::string> TestSuite::TestNames() const {
   return std::move(ret);
 }
 
-void TestSuite::DisableTests(const std::vector<std::string>& tests_to_skip) {
+void TestSuite::DisableTests(const std::set<std::string>& tests_to_skip) {
   for (auto& name : tests_to_skip) {
     tests_.erase(name);
   }
@@ -48,28 +60,44 @@ void TestSuite::Run(const std::string& test_name) {
   SetupTest();
   auto start_time = LogTestStart(test_name);
   it->second();
-  LogTestEnd(test_name, start_time);
+  auto duration = LogTestEnd(test_name, start_time);
   TearDownTest();
+
+  if (ftp_logger_) {
+    if (!ftp_logger_->Connect()) {
+      PrintMsg("FTP connect failed, aborting\n");
+    } else {
+      PrintMsg("Saving progress to FTP server...\n");
+
+      if (allow_saving_) {
+        for (auto& put_operation : ftp_logger_->send_file_queue()) {
+          std::stringstream message;
+          if (!ftp_logger_->PutFile(put_operation.first, put_operation.second)) {
+            message << "- MISSING: \"" << put_operation.second << "\"\n";
+          } else {
+            message << "- OUTPUT: \"" << put_operation.second << "\"\n";
+          }
+
+          if (!ftp_logger_->AppendFile(kFTPLogProgressFilename, message.str())) {
+            PrintMsg("Failed to store progress log to FTP server with artifact info!\n");
+          }
+          message.clear();
+        }
+      }
+      ftp_logger_->ClearSendQueue();
+
+      std::stringstream message;
+      message << "END: \"" << suite_name_ << "::" << test_name << "\" IN " << duration << " MS\n";
+      if (!ftp_logger_->AppendFile(kFTPLogProgressFilename, message.str())) {
+        PrintMsg("Failed to store progress log to FTP server!\n");
+      }
+    }
+  }
 }
 
 void TestSuite::RunAll() {
   auto names = TestNames();
   for (const auto& test_name : names) {
-    if (suspected_crashes_.find(test_name) != suspected_crashes_.end()) {
-      switch (suspected_crash_handling_mode_) {
-        case SuspectedCrashHandling::RUN_ALL:
-          break;
-
-        case SuspectedCrashHandling::SKIP_ALL:
-          continue;
-
-        case SuspectedCrashHandling::ASK:
-          // TODO: IMPLEMENT ASK MODE FOR CRASH HANDLING
-          ASSERT(!"TODO: IMPLEMENT ME");
-          break;
-      }
-    }
-
     Run(test_name);
   }
 }
@@ -128,7 +156,7 @@ void TestSuite::Initialize() {
     p = pb_push1(p, NV097_SET_DOT_RGBMAPPING, 0);
 
     p = pb_push1(p, NV097_SET_SHADE_MODEL, NV097_SET_SHADE_MODEL_SMOOTH);
-    p = pb_push1(p, NV097_SET_FLAT_SHADE_PROVOKING_VERTEX, NV097_SET_FLAT_SHADE_PROVOKING_VERTEX_LAST);
+    p = pb_push1(p, NV097_SET_FLAT_SHADE_OP, NV097_SET_FLAT_SHADE_OP_VERTEX_LAST);
     pb_end(p);
   }
 
@@ -155,9 +183,8 @@ void TestSuite::Initialize() {
   host_.SetFinalCombiner0(TestHost::SRC_ZERO, false, false, TestHost::SRC_ZERO, false, false, TestHost::SRC_ZERO, false,
                           false, TestHost::SRC_R0);
   host_.SetFinalCombiner1(TestHost::SRC_ZERO, false, false, TestHost::SRC_ZERO, false, false, TestHost::SRC_R0, true,
-                          false, false, false, true);
-
-  host_.SetShaderStageProgram(TestHost::STAGE_NONE, TestHost::STAGE_NONE, TestHost::STAGE_NONE, TestHost::STAGE_NONE);
+                          false, /*specular_add_invert_r0*/ false, /* specular_add_invert_v1*/ false,
+                          /* specular_clamp */ true);
 
   while (pb_busy()) {
     /* Wait for completion... */
@@ -238,7 +265,14 @@ void TestSuite::Initialize() {
     p = pb_push1(p, NV097_SET_DEPTH_MASK, true);
     p = pb_push1(p, NV097_SET_DEPTH_FUNC, NV097_SET_DEPTH_FUNC_V_LESS);
     p = pb_push1(p, NV097_SET_STENCIL_TEST_ENABLE, false);
-    p = pb_push1(p, NV097_SET_STENCIL_MASK, true);
+    p = pb_push1(p, NV097_SET_STENCIL_MASK, 0xFF);
+    // If the stencil comparison fails, leave the value in the stencil buffer alone.
+    p = pb_push1(p, NV097_SET_STENCIL_OP_FAIL, NV097_SET_STENCIL_OP_V_KEEP);
+    // If the stencil comparison passes but the depth comparison fails, leave the stencil buffer alone.
+    p = pb_push1(p, NV097_SET_STENCIL_OP_ZFAIL, NV097_SET_STENCIL_OP_V_KEEP);
+    // If the stencil comparison passes and the depth comparison passes, leave the stencil buffer alone.
+    p = pb_push1(p, NV097_SET_STENCIL_OP_ZPASS, NV097_SET_STENCIL_OP_V_KEEP);
+    p = pb_push1(p, NV097_SET_STENCIL_FUNC_REF, 0x7F);
 
     p = pb_push1(p, NV097_SET_NORMALIZATION_ENABLE, false);
 
@@ -253,6 +287,16 @@ void TestSuite::Initialize() {
     p = pb_push4f(p, NV097_SET_TEXCOORD1_4F, 0.f, 0.f, 0.f, 0.f);
     p = pb_push4f(p, NV097_SET_TEXCOORD2_4F, 0.f, 0.f, 0.f, 0.f);
     p = pb_push4f(p, NV097_SET_TEXCOORD3_4F, 0.f, 0.f, 0.f, 0.f);
+
+    p = pb_push1f(p, NV097_SET_MATERIAL_ALPHA, 1.f);
+    p = pb_push1f(p, NV097_SET_MATERIAL_ALPHA_BACK, 1.f);
+
+    // Pow 16
+    const float specular_params[]{-0.803673, -2.7813, 2.97762, -0.64766, -2.36199, 2.71433};
+    for (uint32_t i = 0, offset = 0; i < 6; ++i, offset += 4) {
+      p = pb_push1f(p, NV097_SET_SPECULAR_PARAMS + offset, specular_params[i]);
+      p = pb_push1f(p, NV097_SET_SPECULAR_PARAMS_BACK + offset, 0);
+    }
     pb_end(p);
   }
 
@@ -273,9 +317,9 @@ void TestSuite::Initialize() {
 
   host_.ClearAllVertexAttributeStrideOverrides();
 
-#ifdef ENABLE_PGRAPH_REGION_DIFF
-  pgraph_diff_.Capture();
-#endif
+  if (enable_pgraph_region_diff_) {
+    pgraph_diff_.Capture();
+  }
 
   TagNV2ATrace(2);
   {
@@ -295,9 +339,9 @@ void TestSuite::TagNV2ATrace(uint32_t num_nops) {
 }
 
 void TestSuite::Deinitialize() {
-#ifdef ENABLE_PGRAPH_REGION_DIFF
-  pgraph_diff_.DumpDiff();
-#endif
+  if (enable_pgraph_region_diff_) {
+    pgraph_diff_.DumpDiff();
+  }
 }
 
 void TestSuite::SetupTest() {}
@@ -307,24 +351,43 @@ void TestSuite::TearDownTest() {}
 std::chrono::steady_clock::time_point TestSuite::LogTestStart(const std::string& test_name) {
   PrintMsg("Starting %s::%s\n", suite_name_.c_str(), test_name.c_str());
 
-#ifdef ENABLE_PROGRESS_LOG
   if (allow_saving_) {
-    Logger::Log() << "Starting " << suite_name_ << "::" << test_name << std::endl;
+    if (enable_progress_log_) {
+      Logger::Log() << "Starting " << suite_name_ << "::" << test_name << std::endl;
+    }
   }
-#endif
+
+  if (ftp_logger_) {
+    if (!ftp_logger_->Connect()) {
+      PrintMsg("FTP connect failed, aborting\n");
+    } else {
+      PrintMsg("Saving start message to FTP server...\n");
+      std::stringstream message;
+      message << "START: \"" << suite_name_ << "::" << test_name << "\"\n";
+      if (!ftp_logger_->AppendFile(kFTPLogProgressFilename, message.str())) {
+        PrintMsg("Failed to store progress log to FTP server!\n");
+      }
+    }
+  }
+
+  if (delay_milliseconds_between_tests_) {
+    Sleep(delay_milliseconds_between_tests_);
+  }
 
   return std::chrono::high_resolution_clock::now();
 }
 
-void TestSuite::LogTestEnd(const std::string& test_name, std::chrono::steady_clock::time_point start_time) {
+long TestSuite::LogTestEnd(const std::string& test_name,
+                           const std::chrono::steady_clock::time_point& start_time) const {
   auto now = std::chrono::high_resolution_clock::now();
-  auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
+  auto elapsed = static_cast<long>((duration.count() & 0xFFFFFFFF));
 
   PrintMsg("  Completed '%s' in %lums\n", test_name.c_str(), elapsed);
 
-#ifdef ENABLE_PROGRESS_LOG
-  if (allow_saving_) {
+  if (enable_progress_log_ && allow_saving_) {
     Logger::Log() << "  Completed '" << test_name << "' in " << elapsed << "ms" << std::endl;
   }
-#endif
+
+  return elapsed;
 }

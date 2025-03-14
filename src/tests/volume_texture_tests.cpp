@@ -39,8 +39,8 @@ static bool RequiresSpecialTest(const TextureFormatInfo &format) {
   }
 }
 
-VolumeTextureTests::VolumeTextureTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Volume texture") {
+VolumeTextureTests::VolumeTextureTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Volume texture", config) {
   for (auto i = 0; i < kNumFormats; ++i) {
     auto &format = kTextureFormats[i];
     if (format.xbox_linear) {
@@ -181,7 +181,7 @@ void VolumeTextureTests::Test(const TextureFormatInfo &texture_format) {
   pb_print("C: %d\n", texture_format.require_conversion);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, texture_format.name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, texture_format.name);
 }
 
 void VolumeTextureTests::TestPalettized() {
@@ -218,7 +218,7 @@ void VolumeTextureTests::TestPalettized() {
   pb_print("C: %d\n", texture_format.require_conversion);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, texture_format.name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, texture_format.name);
 }
 
 static int GenerateSurface(SDL_Surface **gradient_surface, int width, int height, int layer) {

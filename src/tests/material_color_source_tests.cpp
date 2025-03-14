@@ -21,8 +21,8 @@ struct LightColors {
   Color ambient;
 };
 
-MaterialColorSourceTests::MaterialColorSourceTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Material color source") {
+MaterialColorSourceTests::MaterialColorSourceTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Material color source", config) {
   for (auto source : {SOURCE_MATERIAL, SOURCE_DIFFUSE, SOURCE_SPECULAR}) {
     std::string name = MakeTestName(source);
     auto test = [this, source]() { this->Test(source); };
@@ -286,7 +286,7 @@ void MaterialColorSourceTests::Test(SourceMode source_mode) {
   pb_printat(9, 36, (char*)"Emissive");
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 std::string MaterialColorSourceTests::MakeTestName(SourceMode source_mode) {

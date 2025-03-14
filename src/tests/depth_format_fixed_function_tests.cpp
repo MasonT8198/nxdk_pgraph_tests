@@ -27,8 +27,9 @@ constexpr DepthFormatFixedFunctionTests::DepthFormat kDepthFormats[] = {
 constexpr uint32_t kNumDepthTests = 4;
 constexpr bool kCompressionSettings[] = {false, true};
 
-DepthFormatFixedFunctionTests::DepthFormatFixedFunctionTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Depth buffer fixed function") {
+DepthFormatFixedFunctionTests::DepthFormatFixedFunctionTests(TestHost &host, std::string output_dir,
+                                                             const Config &config)
+    : TestSuite(host, std::move(output_dir), "Depth buffer fixed function", config) {
   for (auto depth_format : kDepthFormats) {
     uint32_t depth_cutoff_step = depth_format.max_depth / kNumDepthTests;
 
@@ -262,8 +263,7 @@ void DepthFormatFixedFunctionTests::Test(const DepthFormat &format, bool compres
   pb_draw_text_screen();
 
   std::string name = MakeTestName(format, compress_z, depth_cutoff);
-  std::string z_name = name + "_ZB";
-  host_.FinishDraw(allow_saving_, output_dir_, name, z_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name, true);
 }
 
 std::string DepthFormatFixedFunctionTests::MakeTestName(const DepthFormat &format, bool compress_z,

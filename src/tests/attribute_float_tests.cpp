@@ -64,8 +64,8 @@ static const TestConfig testConfigs[]{
     {"-Min_Min", "-Min (subnormal) to +Min (subnormal)", {f(negMinSubNorm), f(posMinSubNorm)}},
 };
 
-AttributeFloatTests::AttributeFloatTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Attrib float") {
+AttributeFloatTests::AttributeFloatTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Attrib float", config) {
   for (auto testConfig : testConfigs) {
     tests_[testConfig.description] = [this, testConfig]() { this->Test(testConfig); };
   }
@@ -148,5 +148,5 @@ void AttributeFloatTests::Test(const TestConfig &tConfig) {
   }
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, tConfig.fileName);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, tConfig.fileName);
 }

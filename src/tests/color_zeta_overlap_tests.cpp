@@ -30,8 +30,8 @@ static constexpr float kRight = 2.75f;
 static constexpr float kTop = 1.75f;
 static constexpr float kBottom = -1.75f;
 
-ColorZetaOverlapTests::ColorZetaOverlapTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Color zeta overlap") {
+ColorZetaOverlapTests::ColorZetaOverlapTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Color zeta overlap", config) {
   tests_[kColorIntoDepthTestName] = [this]() { TestColorIntoDepth(); };
   tests_[kDepthIntoColorTestName] = [this]() { TestDepthIntoColor(); };
   tests_[kSwapTestName] = [this]() { TestSwap(); };
@@ -99,9 +99,7 @@ void ColorZetaOverlapTests::TestColorIntoDepth() {
   pb_print("%s\nZB~=0x%X\nNondeterministic!", kColorIntoDepthTestName, kColor);
   pb_draw_text_screen();
 
-  std::string z_name = kColorIntoDepthTestName;
-  z_name += "_ZB";
-  host_.FinishDraw(allow_saving_, output_dir_, kColorIntoDepthTestName, z_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kColorIntoDepthTestName, true);
 }
 
 void ColorZetaOverlapTests::TestDepthIntoColor() {
@@ -136,9 +134,7 @@ void ColorZetaOverlapTests::TestDepthIntoColor() {
   pb_draw_text_screen();
 
   // The depth buffer is expected to be 0 (as it was set during the PrepareDraw).
-  std::string z_name = kDepthIntoColorTestName;
-  z_name += "_ZB";
-  host_.FinishDraw(allow_saving_, output_dir_, kDepthIntoColorTestName, z_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kDepthIntoColorTestName, true);
 }
 
 void ColorZetaOverlapTests::TestSwap() {
@@ -171,9 +167,7 @@ void ColorZetaOverlapTests::TestSwap() {
   pb_print("%s\nC=0xFF2416E9\nZB=0x00A8BF00", kSwapTestName);
   pb_draw_text_screen();
 
-  std::string z_name = kSwapTestName;
-  z_name += "_ZB";
-  host_.FinishDraw(allow_saving_, output_dir_, kSwapTestName, z_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kSwapTestName, true);
 }
 
 void ColorZetaOverlapTests::TestXemuAdjacentSurfaceWithClipOffset(bool swizzle) {
@@ -248,7 +242,7 @@ void ColorZetaOverlapTests::TestXemuAdjacentSurfaceWithClipOffset(bool swizzle) 
 
   std::string output = kXemuAdjacentWithClipOffsetTest;
   output += swizzle ? "_sz" : "_l";
-  host_.FinishDraw(allow_saving_, output_dir_, output);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, output);
 }
 
 void ColorZetaOverlapTests::TestXemuAdjacentSurfaceWithAA() {
@@ -306,7 +300,7 @@ void ColorZetaOverlapTests::TestXemuAdjacentSurfaceWithAA() {
   pb_print("%s\nSuccessful", kXemuAdjacentWithAATest);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kXemuAdjacentWithAATest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kXemuAdjacentWithAATest);
 }
 
 void ColorZetaOverlapTests::SetSurfaceDMAs() const {

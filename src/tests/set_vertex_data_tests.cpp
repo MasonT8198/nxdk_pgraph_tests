@@ -13,8 +13,8 @@ static constexpr SetVertexDataTests::SetFunction kTests[] = {
     SetVertexDataTests::FUNC_4UB,  SetVertexDataTests::FUNC_4S_M,
 };
 
-SetVertexDataTests::SetVertexDataTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "SetVertexData") {
+SetVertexDataTests::SetVertexDataTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "SetVertexData", config) {
   for (auto saturate_sign : {false, true}) {
     for (auto set_func : kTests) {
       std::string name = MakeTestName(set_func, saturate_sign);
@@ -219,7 +219,7 @@ void SetVertexDataTests::Test(SetFunction func, const Color& diffuse, bool satur
 
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 std::string SetVertexDataTests::MakeTestName(SetFunction func, bool saturate_sign) {

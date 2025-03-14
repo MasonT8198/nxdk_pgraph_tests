@@ -9,8 +9,8 @@
 
 static std::string MakeTestName(bool edge_flag) { return edge_flag ? "Enabled" : "Disabled"; }
 
-EdgeFlagTests::EdgeFlagTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Edge flag") {
+EdgeFlagTests::EdgeFlagTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Edge flag", config) {
   for (auto edge_flag : {false, true}) {
     const std::string test_name = MakeTestName(edge_flag);
     tests_[test_name] = [this, test_name, edge_flag]() { Test(test_name, edge_flag); };
@@ -270,5 +270,5 @@ void EdgeFlagTests::Test(const std::string &name, bool edge_flag) {
 
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }

@@ -13,43 +13,6 @@ Tests will be executed automatically if no gamepad input is given within an init
 
 Individual tests may be executed via the menu.
 
-### Test configuration
-
-Tests can optionally be determined via a configuration file loaded from the XBOX. The file follows a simple line-based
-format.
-
-* A test suite and all of the tests within will be enabled if the suite name appears on a single line.
-* A single test within an enabled suite may be disabled by prefixing its name with a `-` after the line containing the
-  test suite containing it.
-* Any line starting with `#` will be ignored.
-
-The names used are the same as the names that appear in the `nxdk_praph_tests` menu.
-
-If the entire file is empty (or commented out), it will be ignored and all tests will be enabled.
-
-For example:
-
-```
-ThisTestSuiteIsEnabled
--ExceptThisTest
-
-# This is ignored.
-```
-
-In the default release build, the test suite will look for this file in
-`e:/nxdk_pgraph_tests/pgraph_tests.cnf` and `d:\pgraph_tests.cnf`, taking
-whichever is found first. If neither is found, all tests will be executed.
-
-The default release build will also write a template of this file called
-`config.cnf` (see the `DUMP_CONFIG_FILE` Makefile variable).
-
-### Progress logging
-
-If the `ENABLE_PROGRESS_LOG` Makefile variable is set to `y`, a progress log
-named `pgraph_progress_log.txt` will be saved in the output directory. This may
-be useful when trying to track down emulator crashes (e.g., due to unimplemented
-features).
-
 ### Controls
 
 DPAD:
@@ -66,6 +29,122 @@ DPAD:
 * Back - Go up one menu or leave a test. If pressed on the root menu, exit the application.
 * Black - Exit the application.
 
+### Test configuration
+
+Behavior can optionally be determined via a JSON configuration file loaded from the XBOX.
+
+```json
+{
+  "settings": {
+    "enable_progress_log": false,
+    "disable_autorun": false,
+    "enable_autorun_immediately": false,
+    "enable_shutdown_on_completion": false,
+    "enable_pgraph_region_diff": false,
+    "output_directory_path": "e:/nxdk_pgraph_tests",
+    "skip_tests_by_default": false
+  },
+  "test_suites": {}
+}
+```
+
+In the default release build, the program will look for this file in the `output_directory_path` (
+`e:/nxdk_pgraph_tests/nxdk_pgraph_tests_config.json`) and `d:\nxdk_pgraph_tests_config.json`, taking whichever is found
+first.
+
+When building from source, the `sample-config.json` file in the `resources` directory can be copied to
+`resources/nxdk_pgraph_tests_config.json` and modified in order to change the default behavior of the final xiso.
+
+#### Filtering test suites/cases
+
+The `"test_suites"` section may be used to filter the set of tests.
+
+For example, suppose the program contains four test suites: `Default suite`, `Unlisted suite`, `Skipped suite`, and
+`Suite with skipped test`. Each test suite contains two tests, `TestOne` and `TestTwo`. Without any filtering, the menu
+tree would be something like:
+
+```
+Run all and exit
+Default suite
+  TestOne
+  TestTwo
+Unlisted suite
+  TestOne
+  TestTwo
+Skipped suite
+  TestOne
+  TestTwo
+Suite with skipped test
+  TestOne
+  TestTwo
+```
+
+___Note___: The names used within `"test_suites"` and its children are the same as the names that appear in the
+`nxdk_praph_tests` menu.
+
+By default, any descendant of the `"test_suites"` object that contains a `"skipped": true` will be omitted.
+
+For example, the following config will disable all tests except
+
+```json
+{
+  "settings": {},
+  "test_suites": {
+    "Skipped suite": {
+      "skipped": true,
+      "TestOne": {}
+    },
+    "Suite with skipped test": {
+      "TestTwo": {
+        "skipped": true
+      }
+    },
+    "Default suite": {
+      "TestOne": {}
+    }
+  }
+}
+```
+
+Resulting in
+
+```
+Run all and exit
+Default suite
+  TestOne
+  TestTwo
+Unlisted suite
+  TestOne
+  TestTwo
+Suite with skipped test
+  TestOne
+```
+
+This behavior may be modified via the `"skip_tests_by_default"` setting, allowing only entries with an explicit
+`"skipped": false` to be retained. For example, the following config will disable all tests except the `TestOne` case
+under `Default suite`.
+
+```json
+{
+  "settings": {
+    "skip_tests_by_default": true
+  },
+  "test_suites": {
+    "Default suite": {
+      "TestOne": {
+        "skipped": true
+      }
+    }
+  }
+}
+```
+
+### Progress logging
+
+If the `enable_progress_log` runtime config variable is set to `true`, a progress log named `pgraph_progress_log.txt`
+will be saved in the output directory. This may be useful when trying to track down emulator crashes (e.g., due to
+unimplemented features).
+
 ## Build prerequisites
 
 This project uses [nv2a-vsh](https://pypi.org/project/nv2a-vsh/) to assemble some of the vertex shaders for tests.
@@ -74,7 +153,7 @@ It can be installed via `pip3 install nv2a-vsh --upgrade`.
 This test suite requires some modifications to the pbkit used by the nxdk in order to operate.
 
 To facilitate this, the nxdk is included as a submodule of this project, referencing the
-`cmake_pgraph_tester` branch from https://github.com/abaire/nxdk.
+`nxdk_pgraph_tester` branch from https://github.com/abaire/nxdk.
 
 This project should be cloned with the `--recursive` flag to pull the submodules and their submodules,
 after the fact this can be achieved via `git submodule update --init --recursive`.
@@ -82,6 +161,15 @@ after the fact this can be achieved via `git submodule update --init --recursive
 As of July 2023, the nxdk's CMake implementation requires bootstrapping before it may be used. To facilitate this, run
 the `prewarm-nxdk.sh` script from this project's root directory. It will navigate into the `nxdk` subdir and build all
 of the sample projects, triggering the creation of the `nxdk` libraries needed for the toolchain and for this project.
+
+### Generating the default JSON config
+
+1. Configure CMake with the `DUMP_CONFIG_FILE` option set to ON.
+2. Build and run the xiso.
+3. Copy the new `sample-config.json` file from the output directory on the XBOX/emulator into the `resources` directory
+   in this repo.
+
+Note that, when running in `DUMP_CONFIG_FILE` mode, any existing `pgraph_test_config.json` file will be ignored.
 
 ### Building with CLion
 
@@ -107,18 +195,40 @@ Assuming that this project has been checked out at `/development/pgraph_tester`:
 
 ## Adding new tests
 
+### Documentation
+
+Autogenerated documentation may be accessed at https://abaire.github.io/nxdk_pgraph_tests
+
+Some special Doxygen comments are used
+by [the results site generator project](https://github.com/abaire/xemu-nxdk_pgraph_tests_results) to describe test
+results on the website:
+
+1. A detailed description attached to the `TestSuite` subclass (see `two_d_line_tests.h`)
+2. Ideally a list of `@tc` custom commands in the documentation for the constructor method, explaining what each test is
+   doing and/or is expected to display (see `two_d_line_tests.cpp`).
+
+---
+
+**NOTE:** For tests whose class name is not equal to the lower case version of the `suite_name` string passed to the
+`TestSuite` constructor, a `kSuiteName` `private static constexpr const char *` should be created, containing the
+`suite_name` value passed to the `TestSuite`. The documentation generation script will pick this up to allow downstream
+scripts to discover the test metadata.
+
+See `two_d_line_tests.h` for an example.
+
+---
+
+
 ### Using nv2a log events from [xemu](https://xemu.app/)
 
-1. Enable tracing of nv2a log events as normal (see xemu documentation) and
-   exercise the event of interest within the game.
+1. Enable tracing of nv2a log events as normal (see xemu documentation) and exercise the event of interest within the
+   game.
 1. Duplicate an existing test as a skeleton.
-1. Add the duplicated test to `CMakeLists.txt` and `main.cpp` (please preserve
-   alphabetical ordering if possible).
-1. Use [nv2a_to_pbkit](https://github.com/abaire/nv2a_to_pbkit) to get a rough
-   set of pbkit invocations duplicating the behavior from the log. Take the
-   interesting portions of the converted output and put them into the body of
-   the test. You may wish to utilize some of the helper methods from `TestHost`
-   and similar classes rather than using the raw output to improve readability.
+1. Add the duplicated test to `CMakeLists.txt` and `main.cpp` (please preserve alphabetical ordering if possible).
+1. Use [nv2a_to_pbkit](https://github.com/abaire/nv2a_to_pbkit) to get a rough set of pbkit invocations duplicating the
+   behavior from the log. Take the interesting portions of the converted output and put them into the body of the test.
+   You may wish to utilize some of the helper methods from `TestHost`   and similar classes rather than using the raw
+   output to improve readability.
 
 ### Writing nv2a vertex shaders in assembly
 
@@ -178,7 +288,8 @@ Create a build target
 1. Under `Advanced GDB Server Options`
     1. Set "Working directory" to `$ProjectFileDir$`
     1. On macOS, set "Environment variables"
-       to `DYLD_FALLBACK_LIBRARY_PATH=/<the full path to your xemu.app bundle>/Contents/Libraries/<the architecture for your platform, e.g., arm64>`
+       to
+       `DYLD_FALLBACK_LIBRARY_PATH=/<the full path to your xemu.app bundle>/Contents/Libraries/<the architecture for your platform, e.g., arm64>`
     3. Set "Reset command" to `Never`
 
 To capture DbgPrint, additionally append `-device lpc47m157 -serial tcp:127.0.0.1:9091` to `GDB Server args` and use
@@ -200,7 +311,8 @@ To create a launch configuration that deploys the devhost to an XBDM-enabled XBO
     3. Set `Executable` to the full path to the [xbdm_gdb_bridge binary](https://github.com/abaire/xbdm_gdb_bridge)
        binary
     4. Set `Program arguments`
-       to `<YOUR_XBOX_IP> -v3 -- mkdir e:\$CMakeCurrentTargetName$ && putfile $CMakeCurrentBuildDir$/xbe/xbe_file e:\$CMakeCurrentTargetName$ -f`
+       to
+       `<YOUR_XBOX_IP> -v3 -- mkdir e:\$CMakeCurrentTargetName$ && %syncdir $CMakeCurrentBuildDir$/xbe/xbe_file e:\$CMakeCurrentTargetName$ -f`
     5. Run the target. You will need to do this any time the resources are changed. The XBE can be uploaded as part of
        the debug step.
 
@@ -219,5 +331,6 @@ To create a launch configuration that deploys the devhost to an XBDM-enabled XBO
         1. Set "Program" to the full path to the [xbdm_gdb_bridge binary](https://github.com/abaire/xbdm_gdb_bridge)
            binary
         2. Set "Arguments"
-           to `<YOUR_XBOX_IP> -- mkdir e:\$CMakeCurrentTargetName$ && putfile $CMakeCurrentBuildDir$/xbe/xbe_file/default.xbe e:\$CMakeCurrentTargetName$ -f`
+           to
+           `<YOUR_XBOX_IP> -- mkdir e:\$CMakeCurrentTargetName$ && putfile $CMakeCurrentBuildDir$/xbe/xbe_file/default.xbe e:\$CMakeCurrentTargetName$ -f`
         3. Uncheck "Synchronize files after execution"

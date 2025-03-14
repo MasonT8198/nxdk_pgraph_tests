@@ -15,8 +15,8 @@ static constexpr float kRight = 2.75f;
 static constexpr float kTop = 1.75f;
 static constexpr float kBottom = -1.75f;
 
-OverlappingDrawModesTests::OverlappingDrawModesTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Overlapping draw modes") {
+OverlappingDrawModesTests::OverlappingDrawModesTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Overlapping draw modes", config) {
   tests_[kArrElDrawArrArrElTest] = [this]() { TestArrayElementDrawArrayArrayElement(); };
   tests_[kDrawArrDrawArrTest] = [this]() { TestDrawArrayDrawArray(); };
   tests_[kXemuSquashOptimizationTest] = [this]() { TestXemuSquashOptimization(); };
@@ -105,7 +105,7 @@ void OverlappingDrawModesTests::TestArrayElementDrawArrayArrayElement() {
   p = pb_push1(p, NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
   pb_end(p);
 
-  host_.FinishDraw(allow_saving_, output_dir_, kArrElDrawArrArrElTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kArrElDrawArrArrElTest);
 }
 
 void OverlappingDrawModesTests::CreateTriangles() {
@@ -188,7 +188,7 @@ void OverlappingDrawModesTests::TestDrawArrayDrawArray() {
   p = pb_push1(p, NV097_SET_BEGIN_END, NV097_SET_BEGIN_END_OP_END);
   pb_end(p);
 
-  host_.FinishDraw(allow_saving_, output_dir_, kDrawArrDrawArrTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kDrawArrDrawArrTest);
 }
 
 void OverlappingDrawModesTests::TestXemuSquashOptimization() {
@@ -227,7 +227,7 @@ void OverlappingDrawModesTests::TestXemuSquashOptimization() {
 
   pb_end(p);
 
-  host_.FinishDraw(allow_saving_, output_dir_, kXemuSquashOptimizationTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kXemuSquashOptimizationTest);
 }
 
 void OverlappingDrawModesTests::TestXemuSquashOptimizationSingleDrawArrays() {
@@ -264,5 +264,5 @@ void OverlappingDrawModesTests::TestXemuSquashOptimizationSingleDrawArrays() {
 
   pb_end(p);
 
-  host_.FinishDraw(allow_saving_, output_dir_, kXemuSquashOptimizationSingleDrawArraysTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kXemuSquashOptimizationSingleDrawArraysTest);
 }

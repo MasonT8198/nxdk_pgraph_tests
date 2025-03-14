@@ -5,9 +5,13 @@
 
 class TestHost;
 
+/**
+ * Tests handling of NV097_SET_FRONT_FACE and NV097_SET_CULL_FACE, including
+ * degenerate winding values.
+ */
 class FrontFaceTests : public TestSuite {
  public:
-  FrontFaceTests(TestHost &host, std::string output_dir);
+  FrontFaceTests(TestHost& host, std::string output_dir, const Config& config);
 
   void Initialize() override;
 

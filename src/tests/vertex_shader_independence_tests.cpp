@@ -49,8 +49,9 @@ static const uint32_t kShader[] = {
     0x00000000, 0x0020001b, 0x1436106c, 0x2070f819};
 // clang-format on
 
-VertexShaderIndependenceTests::VertexShaderIndependenceTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Vertex shader independence tests") {
+VertexShaderIndependenceTests::VertexShaderIndependenceTests(TestHost& host, std::string output_dir,
+                                                             const Config& config)
+    : TestSuite(host, std::move(output_dir), "Vertex shader independence tests", config) {
   tests_[kTestName] = [this]() { Test(); };
 }
 
@@ -97,5 +98,5 @@ void VertexShaderIndependenceTests::Test() {
   pb_print("Expect a light blue square");
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kTestName);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kTestName);
 }

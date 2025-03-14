@@ -16,19 +16,25 @@
 #pragma clang diagnostic ignored "-Wmacro-redefined"
 #include <windows.h>
 #pragma clang diagnostic pop
+#include <lwip/inet.h>
+#include <lwip/netif.h>
+#include <nxdk/net.h>
 
 #include <algorithm>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "configure.h"
 #include "debug_output.h"
 #include "logger.h"
+#include "runtime_config.h"
 #include "test_driver.h"
 #include "test_host.h"
+#include "tests/alpha_func_tests.h"
 #include "tests/antialiasing_tests.h"
 #include "tests/attribute_carryover_tests.h"
 #include "tests/attribute_explicit_setter_tests.h"
@@ -48,7 +54,9 @@
 #include "tests/front_face_tests.h"
 #include "tests/image_blit_tests.h"
 #include "tests/inline_array_size_mismatch.h"
+#include "tests/lighting_control_tests.h"
 #include "tests/lighting_normal_tests.h"
+#include "tests/lighting_spotlight_tests.h"
 #include "tests/lighting_two_sided_tests.h"
 #include "tests/line_width_tests.h"
 #include "tests/material_alpha_tests.h"
@@ -56,14 +64,20 @@
 #include "tests/material_color_tests.h"
 #include "tests/null_surface_tests.h"
 #include "tests/overlapping_draw_modes_tests.h"
+#include "tests/point_params_tests.h"
+#include "tests/point_size_tests.h"
 #include "tests/pvideo_tests.h"
 #include "tests/set_vertex_data_tests.h"
 #include "tests/shade_model_tests.h"
 #include "tests/smoothing_tests.h"
+#include "tests/specular_back_tests.h"
+#include "tests/specular_tests.h"
+#include "tests/stencil_func_tests.h"
 #include "tests/stencil_tests.h"
 #include "tests/stipple_tests.h"
 #include "tests/surface_clip_tests.h"
 #include "tests/surface_pitch_tests.h"
+#include "tests/swath_width_tests.h"
 #include "tests/texgen_matrix_tests.h"
 #include "tests/texgen_tests.h"
 #include "tests/texture_border_tests.h"
@@ -73,6 +87,7 @@
 #include "tests/texture_format_tests.h"
 #include "tests/texture_framebuffer_blit_tests.h"
 #include "tests/texture_matrix_tests.h"
+#include "tests/texture_perspective_enable_tests.h"
 #include "tests/texture_render_target_tests.h"
 #include "tests/texture_render_update_in_place_tests.h"
 #include "tests/texture_shadow_comparator_tests.h"
@@ -89,37 +104,36 @@
 #include "tests/z_min_max_control_tests.h"
 #include "tests/zero_stride_tests.h"
 
-#ifndef FALLBACK_OUTPUT_ROOT_PATH
-#define FALLBACK_OUTPUT_ROOT_PATH "e:\\";
-#endif
+static constexpr int kDelayOnFailureMilliseconds = 4000;
+
 static constexpr int kFramebufferWidth = 640;
 static constexpr int kFramebufferHeight = 480;
 static constexpr int kTextureWidth = 256;
 static constexpr int kTextureHeight = 256;
 
-#ifdef ENABLE_PROGRESS_LOG
 static constexpr const char* kLogFileName = "pgraph_progress_log.txt";
-#endif
 
-static void register_suites(TestHost& host, std::vector<std::shared_ptr<TestSuite>>& test_suites,
-                            const std::string& output_directory);
-static bool get_writable_output_directory(std::string& xbe_root_directory);
-static bool get_test_output_path(std::string& test_output_directory);
+const UCHAR kSMCSlaveAddress = 0x20;
+const UCHAR kSMCRegisterPower = 0x02;
+const UCHAR kSMCPowerShutdown = 0x80;
+
+static bool EnsureDriveMounted(char drive_letter);
+static bool LoadConfig(RuntimeConfig& config, std::vector<std::string>& errors);
 #ifdef DUMP_CONFIG_FILE
-static void dump_config_file(const std::string& config_file_path,
-                             const std::vector<std::shared_ptr<TestSuite>>& test_suites);
+static void DumpConfig(RuntimeConfig& config, std::vector<std::shared_ptr<TestSuite>>& test_suites);
+#else
+static void RunTests(RuntimeConfig& config, TestHost& host, std::vector<std::shared_ptr<TestSuite>>& test_suites);
 #endif
-#ifdef ENABLE_INTERACTIVE_CRASH_AVOIDANCE
-static bool discover_historical_crashes(const std::string& log_file_path,
-                                        std::map<std::string, std::set<std::string>>& crashes);
-#endif
-static bool process_config(const char* config_file_path, std::vector<std::shared_ptr<TestSuite>>& test_suites);
+static void RegisterSuites(TestHost& host, RuntimeConfig& config, std::vector<std::shared_ptr<TestSuite>>& test_suites,
+                           const std::string& output_directory, std::shared_ptr<FTPLogger> ftp_logger);
+static void Shutdown();
 
 extern "C" __cdecl int automount_d_drive(void);
 
 /* Main program function */
 int main() {
   automount_d_drive();
+  debugPrint("Set video mode");
   XVideoSetMode(kFramebufferWidth, kFramebufferHeight, 32, REFRESH_DEFAULT);
 
   // Reserve 4 times the size of the default framebuffers to allow for antialiasing.
@@ -128,7 +142,7 @@ int main() {
   if (status) {
     debugPrint("pb_init Error %d\n", status);
     pb_show_debug_screen();
-    Sleep(2000);
+    Sleep(kDelayOnFailureMilliseconds);
     return 1;
   }
 
@@ -136,95 +150,115 @@ int main() {
     debugPrint("Failed to initialize SDL_GAMECONTROLLER.");
     debugPrint("%s", SDL_GetError());
     pb_show_debug_screen();
-    Sleep(2000);
+    Sleep(kDelayOnFailureMilliseconds);
+    pb_kill();
     return 1;
   }
 
   if (!(IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG)) {
     debugPrint("Failed to initialize SDL_image PNG mode.");
     pb_show_debug_screen();
-    Sleep(2000);
+    Sleep(kDelayOnFailureMilliseconds);
+    pb_kill();
     return 1;
   }
 
-  std::string test_output_directory;
-  if (!get_test_output_path(test_output_directory)) {
-    debugPrint("Failed to mount %s", test_output_directory.c_str());
+  RuntimeConfig config;
+#ifndef DUMP_CONFIG_FILE
+  {
+    std::vector<std::string> errors;
+    if (!LoadConfig(config, errors)) {
+      debugPrint("Failed to load config, using default values.\n");
+      for (auto& err : errors) {
+        debugPrint("%s\n", err.c_str());
+      }
+      pb_show_debug_screen();
+    }
+  }
+#endif  // DUMP_CONFIG_FILE
+
+  if (!EnsureDriveMounted(config.output_directory_path().front())) {
+    debugPrint("Failed to mount %s, please make sure output directory is on a writable drive.\n",
+               config.output_directory_path().c_str());
     pb_show_debug_screen();
-    Sleep(2000);
+    Sleep(kDelayOnFailureMilliseconds);
+    pb_kill();
     return 1;
   };
 
-  pb_show_front_screen();
-
-  TestHost host(kFramebufferWidth, kFramebufferHeight, kTextureWidth, kTextureHeight);
+  TestHost::EnsureFolderExists(config.output_directory_path());
 
   std::vector<std::shared_ptr<TestSuite>> test_suites;
-  register_suites(host, test_suites, test_output_directory);
+  std::shared_ptr<FTPLogger> ftp_logger;
+#ifndef DUMP_CONFIG_FILE
+  auto network_config_mode = config.network_config_mode();
+  if (network_config_mode != RuntimeConfig::NetworkConfigMode::OFF) {
+    debugPrint("Initializing network...\n");
+    pb_show_debug_screen();
 
-  TestHost::EnsureFolderExists(test_output_directory);
+    nx_net_mode_t network_mode = NX_NET_AUTO;
+    if (network_config_mode == RuntimeConfig::NetworkConfigMode::DHCP) {
+      network_mode = NX_NET_DHCP;
+    } else if (network_config_mode == RuntimeConfig::NetworkConfigMode::STATIC) {
+      network_mode = NX_NET_STATIC;
+    }
 
-  std::map<std::string, std::set<std::string>> historical_crashes;
-#ifdef ENABLE_PROGRESS_LOG
-  {
-    std::string log_file = test_output_directory + "\\" + kLogFileName;
-#ifdef ENABLE_INTERACTIVE_CRASH_AVOIDANCE
-    discover_historical_crashes(log_file, historical_crashes);
-#endif
-    DeleteFile(log_file.c_str());
+    nx_net_parameters_t network_config{network_mode,
+                                       network_mode,
+                                       config.static_ip(),
+                                       config.static_gateway(),
+                                       config.static_netmask(),
+                                       config.static_dns_1(),
+                                       config.static_dns_2()};
+    int net_init_result = nxNetInit(&network_config);
+    if (net_init_result) {
+      debugPrint("nxNetInit failed: %d\n", net_init_result);
+      pb_show_debug_screen();
+      Sleep(kDelayOnFailureMilliseconds);
+      pb_kill();
+      return 1;
+    }
 
-    Logger::Initialize(log_file, true);
+    debugPrint("Network initialized: %s\n", ip4addr_ntoa(netif_ip4_addr(netif_default)));
+    pb_show_debug_screen();
 
-    if (!historical_crashes.empty()) {
-      Logger::Log() << "<HistoricalCrashes>" << std::endl;
-      for (auto& suite_tests : historical_crashes) {
-        for (auto& test : suite_tests.second) {
-          Logger::Log() << "Crash? " << suite_tests.first << "::" << test << std::endl;
-        }
-      }
-      Logger::Log() << "</HistoricalCrashes>" << std::endl;
+    if (config.ftp_server_ip()) {
+      ftp_logger = std::make_shared<FTPLogger>(config.ftp_server_ip(), config.ftp_server_port(), config.ftp_user(),
+                                               config.ftp_password(), config.ftp_timeout_milliseconds());
     }
   }
-#endif
+#endif  // #ifndef DUMP_CONFIG_FILE
+
+  TestHost host(ftp_logger, kFramebufferWidth, kFramebufferHeight, kTextureWidth, kTextureHeight);
+  RegisterSuites(host, config, test_suites, config.output_directory_path(), ftp_logger);
 
 #ifdef DUMP_CONFIG_FILE
-  dump_config_file(test_output_directory + "\\config.cnf", test_suites);
-#endif
-
-  bool config_parsed = false;
-#ifdef RUNTIME_CONFIG_PATH
-  config_parsed = process_config(RUNTIME_CONFIG_PATH, test_suites);
-#endif
-  if (!config_parsed) {
-    // Optionally parse a bundled config.cnf
-    process_config("d:\\pgraph_tests.cnf", test_suites);
-  }
-
-  if (!historical_crashes.empty()) {
-    for (auto& suite : test_suites) {
-      auto crash_info = historical_crashes.find(suite->Name());
-      if (crash_info != historical_crashes.end()) {
-        suite->SetSuspectedCrashes(crash_info->second);
+  debugPrint("Dumping config file and exiting due to DUMP_CONFIG_FILE option.\n");
+  DumpConfig(config, test_suites);
+#else   // DUMP_CONFIG_FILE
+  {
+    std::vector<std::string> errors;
+    if (!config.ApplyConfig(test_suites, errors)) {
+      debugClearScreen();
+      debugPrint("Failed to apply runtime config:\n");
+      for (auto& err : errors) {
+        debugPrint("%s\n", err.c_str());
       }
+      Sleep(kDelayOnFailureMilliseconds);
+      pb_kill();
+      return 1;
     }
   }
 
-  TestDriver driver(host, test_suites, kFramebufferWidth, kFramebufferHeight, !historical_crashes.empty());
-  driver.Run();
-
-#ifdef ENABLE_SHUTDOWN
-  HalInitiateShutdown();
-#else
-  debugPrint("Results written to %s\n\nRebooting in 4 seconds...\n", test_output_directory.c_str());
-#endif
-  pb_show_debug_screen();
-  Sleep(4000);
+  pb_show_front_screen();
+  RunTests(config, host, test_suites);
+#endif  // DUMP_CONFIG_FILE
 
   pb_kill();
   return 0;
 }
 
-static bool ensure_drive_mounted(char drive_letter) {
+static bool EnsureDriveMounted(char drive_letter) {
   if (nxIsDriveMounted(drive_letter)) {
     return true;
   }
@@ -244,451 +278,177 @@ static bool ensure_drive_mounted(char drive_letter) {
   return nxMountDrive(drive_letter, device_path);
 }
 
-static bool get_writable_output_directory(std::string& xbe_root_directory) {
-  std::string xbe_directory = XeImageFileName->Buffer;
-  if (xbe_directory.find("\\Device\\CdRom") == 0) {
-    debugPrint("Running from readonly media, using default path for test output.\n");
-    xbe_root_directory = FALLBACK_OUTPUT_ROOT_PATH;
-
-    std::replace(xbe_root_directory.begin(), xbe_root_directory.end(), '/', '\\');
-
-    return ensure_drive_mounted(xbe_root_directory.front());
+static bool LoadConfig(RuntimeConfig& config, std::vector<std::string>& errors) {
+#ifdef RUNTIME_CONFIG_PATH
+  if (!EnsureDriveMounted(RUNTIME_CONFIG_PATH[0])) {
+    debugPrint("Ignoring missing config at %s\n", RUNTIME_CONFIG_PATH);
+  } else {
+    if (config.LoadConfig(RUNTIME_CONFIG_PATH, errors)) {
+      return true;
+    } else {
+      debugPrint("Failed to load config at %s\n", RUNTIME_CONFIG_PATH);
+    }
   }
+#endif
 
-  xbe_root_directory = "D:";
-  return true;
-}
-
-static bool get_test_output_path(std::string& test_output_directory) {
-  if (!get_writable_output_directory(test_output_directory)) {
-    return false;
-  }
-  char last_char = test_output_directory.back();
-  if (last_char == '\\' || last_char == '/') {
-    test_output_directory.pop_back();
-  }
-  test_output_directory += "\\nxdk_pgraph_tests";
-  return true;
+  return config.LoadConfig("d:\\nxdk_pgraph_tests_config.json", errors);
 }
 
 #ifdef DUMP_CONFIG_FILE
-static void dump_config_file(const std::string& config_file_path,
-                             const std::vector<std::shared_ptr<TestSuite>>& test_suites) {
-  if (!ensure_drive_mounted(config_file_path[0])) {
-    ASSERT(!"Failed to mount config path")
+static void DumpConfig(RuntimeConfig& config, std::vector<std::shared_ptr<TestSuite>>& test_suites) {
+  std::string output_path = config.output_directory_path() + "\\sample-config.json";
+  std::vector<std::string> errors;
+  if (!config.DumpConfig(output_path, test_suites, errors)) {
+    debugPrint("Failed to dump config file at %s\n", output_path.c_str());
+    for (auto& error : errors) {
+      debugPrint("%s\n", error.c_str());
+    }
+  } else {
+    debugPrint("Config written to %s\n", output_path.c_str());
   }
 
-  const char* out_path = config_file_path.c_str();
-  PrintMsg("Writing config file to %s\n", out_path);
+  pb_show_debug_screen();
+  Sleep(4000);
+  Shutdown();
+}
+#else
 
-  std::ofstream config_file(config_file_path);
-  ASSERT(config_file && "Failed to open config file for output");
+static void RunTests(RuntimeConfig& config, TestHost& host, std::vector<std::shared_ptr<TestSuite>>& test_suites) {
+  if (config.enable_progress_log()) {
+    std::string log_file = config.output_directory_path() + "\\" + kLogFileName;
 
-  config_file << "# pgraph test suite configuration" << std::endl;
-  config_file << "# Lines starting with '#' are ignored." << std::endl;
-  config_file << "# To enable a test suite, add its name on a single line with no leading #. E.g.," << std::endl;
-  config_file << "# Lighting normals" << std::endl;
-  config_file << "# To disable a single test within a suite, add the name of the test prefixed with" << std::endl;
-  config_file << "#  a '-' after the uncommented suite. E.g.," << std::endl;
-  config_file << "# -NoNormal" << std::endl;
-  config_file << std::endl;
+    DeleteFile(log_file.c_str());
 
-  for (auto& suite : test_suites) {
-    config_file << suite->Name() << std::endl;
-    for (auto& test_name : suite->TestNames()) {
-      config_file << "# " << test_name << std::endl;
-    }
-    config_file << std::endl << "#-------------------" << std::endl;
+    Logger::Initialize(log_file, true);
+  }
+
+  TestDriver driver(host, test_suites, kFramebufferWidth, kFramebufferHeight, false, config.disable_autorun(),
+                    config.enable_autorun_immediately());
+  driver.Run();
+
+  PrintMsg("Test loop completed normally\n");
+  if (config.enable_progress_log() && Logger::Log().is_open()) {
+    Logger::Log() << "Testing completed normally, closing log." << std::endl;
+    Logger::Log().close();
+  }
+
+  if (config.enable_shutdown_on_completion()) {
+    debugPrint("Results written to %s\n\nShutting down in 4 seconds...\n", config.output_directory_path().c_str());
+    pb_show_debug_screen();
+    Sleep(4000);
+
+    Shutdown();
+  } else {
+    debugPrint("Results written to %s\n\nRebooting in 4 seconds...\n", config.output_directory_path().c_str());
+    pb_show_debug_screen();
+    Sleep(4000);
   }
 }
 #endif  // DUMP_CONFIG_FILE
 
-#ifdef ENABLE_INTERACTIVE_CRASH_AVOIDANCE
-static bool discover_historical_crashes(const std::string& log_file_path,
-                                        std::map<std::string, std::set<std::string>>& crashes) {
-  crashes.clear();
-  if (!ensure_drive_mounted(log_file_path[0])) {
-    return false;
+static void Shutdown() {
+  // TODO: HalInitiateShutdown doesn't seem to cause Xemu to actually close.
+  // This never sends the SMC command indicating that a shutdown should occur (at least, it never makes it to
+  // `smc_write_data` to be processed).
+  // HalInitiateShutdown();
+
+  HalWriteSMBusValue(kSMCSlaveAddress, kSMCRegisterPower, FALSE, kSMCPowerShutdown);
+  while (true) {
+    Sleep(30000);
   }
-
-  std::string dos_style_path = log_file_path;
-  std::replace(dos_style_path.begin(), dos_style_path.end(), '/', '\\');
-
-  std::ifstream log_file(dos_style_path.c_str());
-  if (!log_file) {
-    return false;
-  }
-
-  std::string last_test_suite;
-  std::string last_test_name;
-  std::string line;
-
-  auto add_crash = [&crashes](const std::string& suite, const std::string& test) {
-    auto toskip = crashes.find(suite);
-    if (toskip == crashes.end()) {
-      crashes[suite] = {test};
-    } else {
-      toskip->second.emplace(test);
-    }
-  };
-
-  while (std::getline(log_file, line)) {
-    PrintMsg("'%s'\n", line.c_str());
-    if (!line.compare(0, 7, "Crash? ")) {
-      line = line.substr(7);
-      auto delimiter = line.find("::");
-      add_crash(line.substr(0, delimiter), line.substr(delimiter + 2));
-      continue;
-    }
-
-    if (!line.compare(0, 9, "Starting ")) {
-      if (!last_test_suite.empty()) {
-        PrintMsg("Potential crash: '%s' '%s'\n", last_test_suite.c_str(), last_test_name.c_str());
-        add_crash(last_test_suite, last_test_name);
-      }
-
-      line = line.substr(9);
-      auto delimiter = line.find("::");
-      last_test_suite = line.substr(0, delimiter);
-      last_test_name = line.substr(delimiter + 2);
-      continue;
-    }
-
-    if (!line.compare(0, 13, "  Completed '")) {
-      std::string test_name = line.substr(13);
-      auto delimiter = test_name.rfind("' in ");
-      test_name = test_name.substr(0, delimiter);
-      if (test_name == last_test_name) {
-        auto crash_suite = crashes.find(last_test_suite);
-        if (crash_suite != crashes.end()) {
-          crash_suite->second.erase(last_test_name);
-        }
-        last_test_suite.clear();
-        last_test_name.clear();
-        continue;
-      }
-      PrintMsg("Completed line mismatch: '%s' '%s' but completed: '%s'\n", last_test_suite.c_str(),
-               last_test_name.c_str(), test_name.c_str());
-    }
-
-    PrintMsg("Unprocessed log line '%s'\n", line.c_str());
-  }
-
-  if (!last_test_suite.empty()) {
-    PrintMsg("Potential crash: '%s' '%s'\n", last_test_suite.c_str(), last_test_name.c_str());
-    add_crash(last_test_suite, last_test_name);
-  }
-
-  return true;
-}
-#endif  // ENABLE_INTERACTIVE_CRASH_AVOIDANCE
-
-static bool process_config(const char* config_file_path, std::vector<std::shared_ptr<TestSuite>>& test_suites) {
-  if (!ensure_drive_mounted(config_file_path[0])) {
-    PrintMsg("Ignoring missing config at %s\n", config_file_path);
-    return false;
-  }
-
-  std::string dos_style_path = config_file_path;
-  std::replace(dos_style_path.begin(), dos_style_path.end(), '/', '\\');
-  std::map<std::string, std::vector<std::string>> test_config;
-  std::ifstream config_file(dos_style_path.c_str());
-  if (!config_file) {
-    PrintMsg("Ignoring missing config at %s\n", config_file_path);
-    return false;
-  }
-
-  // The config file is a list of test suite names (one per line), each optionally followed by lines containing a test
-  // name prefixed with '-' (indicating that test should be disabled).
-  std::string last_test_suite;
-  std::string line;
-  while (std::getline(config_file, line)) {
-    if (line.empty()) {
-      continue;
-    }
-    if (line.front() == '-') {
-      line.erase(0, 1);
-      test_config[last_test_suite].push_back(line);
-      continue;
-    }
-    if (line.front() == '#') {
-      continue;
-    }
-
-    test_config[line] = {};
-    last_test_suite = line;
-  }
-
-  std::vector<std::shared_ptr<TestSuite>> filtered_tests;
-  for (auto& suite : test_suites) {
-    auto config = test_config.find(suite->Name());
-    if (config == test_config.end()) {
-      continue;
-    }
-
-    if (!config->second.empty()) {
-      suite->DisableTests(config->second);
-    }
-    filtered_tests.push_back(suite);
-  }
-
-  if (filtered_tests.empty()) {
-    return true;
-  }
-  test_suites = filtered_tests;
-
-  return true;
 }
 
-static void register_suites(TestHost& host, std::vector<std::shared_ptr<TestSuite>>& test_suites,
-                            const std::string& output_directory) {
-  // Must be the first suite run for valid results. The first test depends on having a cleared initial state.
-  {
-    auto suite = std::make_shared<LightingNormalTests>(host, output_directory);
-    test_suites.push_back(suite);
+static void RegisterSuites(TestHost& host, RuntimeConfig& runtime_config,
+                           std::vector<std::shared_ptr<TestSuite>>& test_suites, const std::string& output_directory,
+                           std::shared_ptr<FTPLogger> ftp_logger) {
+  auto config = TestSuite::Config{runtime_config.enable_progress_log(), runtime_config.enable_pgraph_region_diff(),
+                                  runtime_config.delay_milliseconds_between_tests(), std::move(ftp_logger)};
+
+#define REG_TEST(CLASS_NAME)                                                   \
+  {                                                                            \
+    auto suite = std::make_shared<CLASS_NAME>(host, output_directory, config); \
+    test_suites.push_back(suite);                                              \
   }
-  {
-    auto suite = std::make_shared<AntialiasingTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<AttributeCarryoverTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<AttributeExplicitSetterTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<AttributeFloatTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<BlendTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ClearTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ColorKeyTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ColorMaskBlendTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ColorZetaDisableTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ColorZetaOverlapTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<CombinerTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<DepthFormatTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<DepthFormatFixedFunctionTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<DMACorruptionAroundSurfaceTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<EdgeFlagTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<FogTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<FogCustomShaderTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<FogInfiniteFogCoordinateTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<FogVec4CoordTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<FrontFaceTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ImageBlitTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<InlineArraySizeMismatchTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<LightingTwoSidedTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<LineWidthTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<MaterialAlphaTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<MaterialColorTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<MaterialColorSourceTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<NullSurfaceTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<OverlappingDrawModesTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<PvideoTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<SetVertexDataTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ShadeModelTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<SmoothingTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<SurfaceClipTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<SurfacePitchTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<StencilTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<StippleTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureBorderTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureCPUUpdateTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureCubemapTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TexgenMatrixTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TexgenTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureFormatDXTTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureFormatTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureFramebufferBlitTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureMatrixTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureRenderTargetTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureRenderUpdateInPlaceTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureShadowComparatorTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TextureSignedComponentTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ThreeDPrimitiveTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<TwoDLineTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<VertexShaderIndependenceTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<VertexShaderRoundingTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<VertexShaderSwizzleTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ViewportTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<VolumeTextureTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<WParamTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<WindowClipTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ZMinMaxControlTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
-  {
-    auto suite = std::make_shared<ZeroStrideTests>(host, output_directory);
-    test_suites.push_back(suite);
-  }
+
+  // LightingNormalTests must be the first suite run for valid results. The first test in the suite depends on having a
+  // clean initial state.
+  REG_TEST(LightingNormalTests)
+
+  // Remaining tests should be alphabetized.
+  // -- Begin REG_TEST --
+  REG_TEST(AlphaFuncTests)
+  REG_TEST(AntialiasingTests)
+  REG_TEST(AttributeCarryoverTests)
+  REG_TEST(AttributeExplicitSetterTests)
+  REG_TEST(AttributeFloatTests)
+  REG_TEST(BlendTests)
+  REG_TEST(ClearTests)
+  REG_TEST(ColorKeyTests)
+  REG_TEST(ColorMaskBlendTests)
+  REG_TEST(ColorZetaDisableTests)
+  REG_TEST(ColorZetaOverlapTests)
+  REG_TEST(CombinerTests)
+  REG_TEST(DepthFormatTests)
+  REG_TEST(DepthFormatFixedFunctionTests)
+  REG_TEST(DMACorruptionAroundSurfaceTests)
+  REG_TEST(EdgeFlagTests)
+  REG_TEST(FogTests)
+  REG_TEST(FogCustomShaderTests)
+  REG_TEST(FogInfiniteFogCoordinateTests)
+  REG_TEST(FogVec4CoordTests)
+  REG_TEST(FrontFaceTests)
+  REG_TEST(ImageBlitTests)
+  REG_TEST(InlineArraySizeMismatchTests)
+  REG_TEST(LightingControlTests)
+  REG_TEST(LightingSpotlightTests)
+  REG_TEST(LightingTwoSidedTests)
+  REG_TEST(LineWidthTests)
+  REG_TEST(MaterialAlphaTests)
+  REG_TEST(MaterialColorTests)
+  REG_TEST(MaterialColorSourceTests)
+  REG_TEST(NullSurfaceTests)
+  REG_TEST(OverlappingDrawModesTests)
+  REG_TEST(PointParamsTests)
+  REG_TEST(PointSizeTests)
+  REG_TEST(PvideoTests)
+  REG_TEST(SetVertexDataTests)
+  REG_TEST(ShadeModelTests)
+  REG_TEST(SmoothingTests)
+  REG_TEST(SpecularBackTests)
+  REG_TEST(SpecularTests)
+  REG_TEST(SwathWidthTests)
+  REG_TEST(SurfaceClipTests)
+  REG_TEST(SurfacePitchTests)
+  REG_TEST(StencilTests)
+  REG_TEST(StencilFuncTests)
+  REG_TEST(StippleTests)
+  REG_TEST(TextureBorderTests)
+  REG_TEST(TextureCPUUpdateTests)
+  REG_TEST(TextureCubemapTests)
+  REG_TEST(TexgenMatrixTests)
+  REG_TEST(TexgenTests)
+  REG_TEST(TextureFormatDXTTests)
+  REG_TEST(TextureFormatTests)
+  REG_TEST(TextureFramebufferBlitTests)
+  REG_TEST(TextureMatrixTests)
+  REG_TEST(TexturePerspectiveEnableTests)
+  REG_TEST(TextureRenderTargetTests)
+  REG_TEST(TextureRenderUpdateInPlaceTests)
+  REG_TEST(TextureShadowComparatorTests)
+  REG_TEST(TextureSignedComponentTests)
+  REG_TEST(ThreeDPrimitiveTests)
+  REG_TEST(TwoDLineTests)
+  REG_TEST(VertexShaderIndependenceTests)
+  REG_TEST(VertexShaderRoundingTests)
+  REG_TEST(VertexShaderSwizzleTests)
+  REG_TEST(ViewportTests)
+  REG_TEST(VolumeTextureTests)
+  REG_TEST(WParamTests)
+  REG_TEST(WindowClipTests)
+  REG_TEST(ZMinMaxControlTests)
+  REG_TEST(ZeroStrideTests)
+
+  // -- End REG_TEST --
+
+#undef REG_TEST
 }

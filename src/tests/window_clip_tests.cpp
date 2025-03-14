@@ -64,8 +64,8 @@ static std::string MakeRenderTargetTestName(bool clip_exclusive, bool swap_order
   return std::string("r") + MakeTestName(clip_exclusive, swap_order, c1, c2);
 }
 
-WindowClipTests::WindowClipTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Window clip") {
+WindowClipTests::WindowClipTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Window clip", config) {
   for (auto exclusive : {false, true}) {
     for (auto &c2 : kClipTwo) {
       for (auto &c1 : kClipOne) {
@@ -161,7 +161,7 @@ void WindowClipTests::Test(bool clip_exclusive, bool swap_order, const ClipRect 
   pb_printat(2, 25, (char *)"%d,%d - %d,%d", c2_left, c2_top, c2_right, c2_bottom);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 void WindowClipTests::TestRenderTarget(bool clip_exclusive, bool swap_order, const ClipRect &c1, const ClipRect &c2) {
@@ -255,5 +255,5 @@ void WindowClipTests::TestRenderTarget(bool clip_exclusive, bool swap_order, con
   pb_print("%d,%d - %d,%d\n", c2_left, c2_top, c2_right, c2_bottom);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }

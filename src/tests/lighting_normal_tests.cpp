@@ -30,8 +30,8 @@ static constexpr LightingNormalTests::DrawMode kDrawMode[] = {
     LightingNormalTests::DRAW_INLINE_ELEMENTS,
 };
 
-LightingNormalTests::LightingNormalTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Lighting normals") {
+LightingNormalTests::LightingNormalTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Lighting normals", config) {
   for (auto draw_mode : kDrawMode) {
     for (auto params : kTests) {
       std::string name = MakeTestName(params.set_normal, params.normal, draw_mode);
@@ -204,7 +204,7 @@ void LightingNormalTests::Test(bool set_normal, const float* normal, DrawMode dr
   pb_draw_text_screen();
 
   std::string name = MakeTestName(set_normal, normal, draw_mode);
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 std::string LightingNormalTests::MakeTestName(bool set_normal, const float* normal, DrawMode draw_mode) {

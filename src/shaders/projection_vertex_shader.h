@@ -11,11 +11,10 @@ using namespace XboxMath;
 class ProjectionVertexShader : public VertexShaderProgram {
  public:
   ProjectionVertexShader(uint32_t framebuffer_width, uint32_t framebuffer_height, float z_min = 0, float z_max = 0x7FFF,
-                         bool enable_lighting = true, bool use_4_component_texcoords = false);
+                         bool enable_lighting = true);
 
   void SetLightingEnabled(bool enabled = true) { enable_lighting_ = enabled; }
 
-  inline void SetUse4ComponentTexcoords(bool enable = true) { use_4_component_texcoords_ = enable; }
   inline void SetUseD3DStyleViewport(bool enable = true) {
     use_d3d_style_viewport_ = enable;
     UpdateMatrices();
@@ -35,7 +34,12 @@ class ProjectionVertexShader : public VertexShaderProgram {
   void LookAt(const vector_t &camera_position, const vector_t &look_at_point, const vector_t &up);
   void LookTo(const vector_t &camera_position, const vector_t &camera_direction, const vector_t &up);
   void SetCamera(const vector_t &position, const vector_t &rotation);
+
+  //! Sets the direction from the origin towards the directional light.
   void SetDirectionalLightDirection(const vector_t &direction);
+
+  //! Sets the direction in which the directional light is casting light.
+  void SetDirectionalLightCastDirection(const vector_t &direction);
 
   matrix4_t &GetModelMatrix() { return model_matrix_; }
   matrix4_t &GetViewMatrix() { return view_matrix_; }
@@ -51,6 +55,9 @@ class ProjectionVertexShader : public VertexShaderProgram {
 
   //! Unprojects the given screen point, producing world coordinates that will project there with the given Z value.
   void UnprojectPoint(vector_t &result, const vector_t &screen_point, float world_z) const;
+
+  //! Causes matrices to be transposed before being uploaded to the shader.
+  void SetTransposeOnUpload(bool transpose = true) { transpose_on_upload_ = transpose; }
 
  protected:
   void OnActivate() override;
@@ -69,7 +76,6 @@ class ProjectionVertexShader : public VertexShaderProgram {
   float z_max_;
 
   bool enable_lighting_{true};
-  bool use_4_component_texcoords_{false};
   // Generate a viewport matrix that matches XDK/D3D behavior.
   bool use_d3d_style_viewport_{false};
 
@@ -84,6 +90,8 @@ class ProjectionVertexShader : public VertexShaderProgram {
 
   vector_t camera_position_ = {0, 0, -2.25, 1};
   vector_t light_direction_ = {0, 0, 1, 1};
+
+  bool transpose_on_upload_{false};
 };
 
 #endif  // NXDK_PGRAPH_TESTS_SHADERS_PROJECTION_VERTEX_SHADER_H_

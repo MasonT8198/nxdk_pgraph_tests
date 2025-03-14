@@ -31,8 +31,8 @@ static const FogTests::FogGenMode kGenModes[] = {
 };
 // clang-format on
 
-FogTests::FogTests(TestHost& host, std::string output_dir, std::string suite_name)
-    : TestSuite(host, std::move(output_dir), std::move(suite_name)) {
+FogTests::FogTests(TestHost& host, std::string output_dir, const Config& config, std::string suite_name)
+    : TestSuite(host, std::move(output_dir), std::move(suite_name), config) {
   for (const auto fog_mode : kFogModes) {
     for (const auto gen_mode : kGenModes) {
       // Alpha doesn't seem to actually have any effect.
@@ -160,7 +160,7 @@ void FogTests::Test(FogTests::FogMode fog_mode, FogTests::FogGenMode gen_mode, u
   pb_print("%s\n", name.c_str());
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 std::string FogTests::MakeTestName(FogTests::FogMode fog_mode, FogTests::FogGenMode gen_mode, uint32_t fog_alpha) {
@@ -214,8 +214,9 @@ std::string FogTests::MakeTestName(FogTests::FogMode fog_mode, FogTests::FogGenM
   return std::move(ret);
 }
 
-FogCustomShaderTests::FogCustomShaderTests(TestHost& host, std::string output_dir, std::string suite_name)
-    : FogTests(host, std::move(output_dir), std::move(suite_name)) {}
+FogCustomShaderTests::FogCustomShaderTests(TestHost& host, std::string output_dir, const Config& config,
+                                           std::string suite_name)
+    : FogTests(host, std::move(output_dir), config, std::move(suite_name)) {}
 
 void FogCustomShaderTests::Initialize() {
   FogTests::Initialize();
@@ -240,16 +241,15 @@ static const uint32_t kInfiniteFogCShader[] = {
 };
 // clang-format on
 
-FogInfiniteFogCoordinateTests::FogInfiniteFogCoordinateTests(TestHost& host, std::string output_dir)
-    : FogCustomShaderTests(host, std::move(output_dir), "Fog inf coord") {}
+FogInfiniteFogCoordinateTests::FogInfiniteFogCoordinateTests(TestHost& host, std::string output_dir,
+                                                             const Config& config)
+    : FogCustomShaderTests(host, std::move(output_dir), config, "Fog inf coord") {}
 
 void FogInfiniteFogCoordinateTests::Initialize() {
   FogCustomShaderTests::Initialize();
 
   auto shader = host_.GetShaderProgram();
   shader->SetShaderOverride(kInfiniteFogCShader, sizeof(kInfiniteFogCShader));
-  // const c[12] = 0
-  shader->SetUniformF(12, 0.0f);
   host_.SetVertexShaderProgram(shader);
 }
 
@@ -384,8 +384,8 @@ static const FogVec4CoordTests::TestConfig kFogWTests[] = {
 
 static constexpr const char kUnsetTest[] = "CoordNotSet";
 
-FogVec4CoordTests::FogVec4CoordTests(TestHost& host, std::string output_dir)
-    : FogCustomShaderTests(host, std::move(output_dir), "Fog coord vec4") {
+FogVec4CoordTests::FogVec4CoordTests(TestHost& host, std::string output_dir, const Config& config)
+    : FogCustomShaderTests(host, std::move(output_dir), config, "Fog coord vec4") {
   tests_.clear();
 
   for (auto& config : kFogWTests) {
@@ -426,7 +426,7 @@ void FogVec4CoordTests::Test(const TestConfig& config) {
   pb_print("%s\n", name.c_str());
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 void FogVec4CoordTests::TestUnset() {
@@ -458,15 +458,18 @@ void FogVec4CoordTests::TestUnset() {
   pb_print("%s\n", kUnsetTest);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kUnsetTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kUnsetTest);
 }
 
 void FogVec4CoordTests::SetShader(const FogVec4CoordTests::TestConfig& config) const {
   auto shader = host_.GetShaderProgram();
   shader->SetShaderOverride(config.shader, config.shader_size);
-  shader->SetUniformF(12, config.fog[0], config.fog[1], config.fog[2], config.fog[3]);
-  // const c[13] = 1 0
-  shader->SetUniformF(13, 1.0f, 0.0f);
+
+  auto index = 120 - PerspectiveVertexShader::kShaderUserConstantOffset;
+  // c[120].xyzw = fog test value
+  shader->SetUniformF(index++, config.fog[0], config.fog[1], config.fog[2], config.fog[3]);
+  // #one_and_zero vector
+  shader->SetUniformF(index++, 1.0f, 0.0f);
   host_.SetVertexShaderProgram(shader);
 }
 

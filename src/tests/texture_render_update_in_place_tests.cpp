@@ -24,8 +24,9 @@ const uint32_t kDefaultDMAColorChannel = 9;
 
 static const char *kTestName = "RenderToInputTexture";
 
-TextureRenderUpdateInPlaceTests::TextureRenderUpdateInPlaceTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texture render update in place") {
+TextureRenderUpdateInPlaceTests::TextureRenderUpdateInPlaceTests(TestHost &host, std::string output_dir,
+                                                                 const Config &config)
+    : TestSuite(host, std::move(output_dir), "Texture render update in place", config) {
   tests_[kTestName] = [this]() { Test(); };
 }
 
@@ -167,5 +168,5 @@ void TextureRenderUpdateInPlaceTests::Test() {
   host_.PrepareDraw(0xFE252525);
   host_.DrawArrays();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kTestName);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kTestName);
 }

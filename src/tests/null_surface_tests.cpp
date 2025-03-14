@@ -16,8 +16,8 @@ static constexpr const char kNullColorTest[] = "NullColor";
 static constexpr const char kNullZetaTest[] = "NullZeta";
 static constexpr const char kXemuBug893Test[] = "XemuBug893";
 
-NullSurfaceTests::NullSurfaceTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Null surface") {
+NullSurfaceTests::NullSurfaceTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Null surface", config) {
   //  tests_[kNullColorTest] = [this]() { TestNullColor(); };
   //  tests_[kNullZetaTest] = [this]() { TestNullZeta(); };
   tests_[kXemuBug893Test] = [this]() { TestXemuBug893(); };
@@ -33,14 +33,14 @@ void NullSurfaceTests::TestNullColor() {
   host_.PrepareDraw(0xFE131413);
   SetSurfaceDMAs();
   RestoreSurfaceDMAs();
-  host_.FinishDraw(allow_saving_, output_dir_, kNullColorTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kNullColorTest);
 }
 
 void NullSurfaceTests::TestNullZeta() {
   host_.PrepareDraw(0xFE131414);
   SetSurfaceDMAs();
   RestoreSurfaceDMAs();
-  host_.FinishDraw(allow_saving_, output_dir_, kNullZetaTest);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kNullZetaTest);
 }
 
 void NullSurfaceTests::TestXemuBug893() {
@@ -112,7 +112,7 @@ void NullSurfaceTests::TestXemuBug893() {
   pb_print("Test passed\n");
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, kXemuBug893Test);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, kXemuBug893Test);
 }
 
 void NullSurfaceTests::SetSurfaceDMAs() const {

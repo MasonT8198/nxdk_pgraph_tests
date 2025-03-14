@@ -14,12 +14,16 @@
 
 #include "menu_item.h"
 
+static constexpr auto kButtonRepeatMilliseconds = 150;
+
 TestDriver::TestDriver(TestHost &host, const std::vector<std::shared_ptr<TestSuite>> &test_suites,
-                       uint32_t framebuffer_width, uint32_t framebuffer_height, bool show_options_menu)
+                       uint32_t framebuffer_width, uint32_t framebuffer_height, bool show_options_menu,
+                       bool disable_autorun, bool autorun_immediately)
     : test_suites_(test_suites), test_host_(host) {
   auto on_run_all = [this]() { RunAllTestsNonInteractive(); };
   auto on_exit = [this]() { running_ = false; };
-  root_menu_ = std::make_shared<MenuItemRoot>(test_suites, on_run_all, on_exit, framebuffer_width, framebuffer_height);
+  root_menu_ = std::make_shared<MenuItemRoot>(test_suites, on_run_all, on_exit, framebuffer_width, framebuffer_height,
+                                              disable_autorun, autorun_immediately);
 
   if (show_options_menu) {
     auto on_options_exit = [this]() { active_menu_ = root_menu_; };
@@ -40,8 +44,11 @@ TestDriver::~TestDriver() {
 }
 
 void TestDriver::Run() {
+  std::map<SDL_GameControllerButton, std::chrono::time_point<std::chrono::steady_clock>> button_repeat_map;
+
   while (running_) {
     SDL_Event event;
+
     while (SDL_PollEvent(&event)) {
       switch (event.type) {
         case SDL_CONTROLLERDEVICEADDED:
@@ -52,14 +59,27 @@ void TestDriver::Run() {
           OnControllerRemoved(event.cdevice);
           break;
 
-        case SDL_CONTROLLERBUTTONDOWN:
-          // Fallthrough
+        case SDL_CONTROLLERBUTTONDOWN: {
+          auto now = std::chrono::high_resolution_clock::now();
+          button_repeat_map[static_cast<SDL_GameControllerButton>(event.cbutton.button)] = now;
+        } break;
+
         case SDL_CONTROLLERBUTTONUP:
+          button_repeat_map.erase(static_cast<SDL_GameControllerButton>(event.cbutton.button));
           OnControllerButtonEvent(event.cbutton);
           break;
 
         default:
           break;
+      }
+    }
+
+    auto now = std::chrono::high_resolution_clock::now();
+    for (const auto &pair : button_repeat_map) {
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - pair.second).count();
+      if (elapsed > kButtonRepeatMilliseconds) {
+        OnButtonActivated(pair.first, true);
+        button_repeat_map[pair.first] = std::chrono::high_resolution_clock::now();
       }
     }
 
@@ -130,49 +150,60 @@ void TestDriver::OnControllerButtonEvent(const SDL_ControllerButtonEvent &event)
     return;
   }
 
-  switch (event.button) {
+  OnButtonActivated(static_cast<SDL_GameControllerButton>(event.button), false);
+}
+
+void TestDriver::OnButtonActivated(SDL_GameControllerButton button, bool is_repeat) {
+  switch (button) {
     case SDL_CONTROLLER_BUTTON_BACK:
-      OnBack();
+      OnBack(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_START:
-      OnStart();
+      OnStart(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_DPAD_UP:
-      OnUp();
+      OnUp(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-      OnDown();
+      OnDown(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-      OnLeft();
+      OnLeft(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-      OnRight();
+      OnRight(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_A:
-      OnA();
+      OnA(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_B:
-      OnB();
+      OnB(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_X:
-      OnX();
+      OnX(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_Y:
-      OnY();
+      OnY(is_repeat);
       break;
 
     case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER:
-      OnBlack();
+      OnBlack(is_repeat);
+      break;
+
+    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
+      OnWhite(is_repeat);
+      break;
+
+    default:
       break;
   }
 }
@@ -183,28 +214,63 @@ void TestDriver::ShowDebugMessageAndExit() {
   running_ = false;
 }
 
-void TestDriver::OnBack() { active_menu_->Deactivate(); }
+void TestDriver::OnBack(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
+  active_menu_->Deactivate();
+}
 
-void TestDriver::OnStart() { active_menu_->Activate(); }
+void TestDriver::OnStart(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
+  active_menu_->Activate();
+}
 
-void TestDriver::OnBlack() { running_ = false; }
+void TestDriver::OnBlack(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
+  running_ = false;
+}
 
-void TestDriver::OnA() { active_menu_->Activate(); }
+void TestDriver::OnWhite(bool is_repeat) {}
 
-void TestDriver::OnB() { active_menu_->Deactivate(); }
+void TestDriver::OnA(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
+  active_menu_->Activate();
+}
 
-void TestDriver::OnX() { active_menu_->ActivateCurrentSuite(); }
+void TestDriver::OnB(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
+  active_menu_->Deactivate();
+}
 
-void TestDriver::OnY() {
+void TestDriver::OnX(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
+  active_menu_->ActivateCurrentSuite();
+}
+
+void TestDriver::OnY(bool is_repeat) {
+  if (is_repeat) {
+    return;
+  }
   bool save_results = !test_host_.GetSaveResults();
   test_host_.SetSaveResults(save_results);
   MenuItemTest::SetOneShotMode(save_results);
 }
 
-void TestDriver::OnUp() { active_menu_->CursorUp(); }
+void TestDriver::OnUp(bool is_repeat) { active_menu_->CursorUp(is_repeat); }
 
-void TestDriver::OnDown() { active_menu_->CursorDown(); }
+void TestDriver::OnDown(bool is_repeat) { active_menu_->CursorDown(is_repeat); }
 
-void TestDriver::OnLeft() { active_menu_->CursorLeft(); }
+void TestDriver::OnLeft(bool is_repeat) { active_menu_->CursorLeft(is_repeat); }
 
-void TestDriver::OnRight() { active_menu_->CursorRight(); }
+void TestDriver::OnRight(bool is_repeat) { active_menu_->CursorRight(is_repeat); }

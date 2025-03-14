@@ -21,8 +21,8 @@ static constexpr AttributeExplicitSetterTests::TestConfig kTestConfigs[] = {
 
 // static TestHost::VertexAttribute TestAttributeToVertexAttribute(AttributeExplicitSetterTests::Attribute attribute);
 
-AttributeExplicitSetterTests::AttributeExplicitSetterTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Attrib setter") {
+AttributeExplicitSetterTests::AttributeExplicitSetterTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Attrib setter", config) {
   for (auto& config : kTestConfigs) {
     tests_[config.test_name] = [this, &config]() { this->Test(config); };
   }
@@ -101,7 +101,7 @@ void AttributeExplicitSetterTests::Test(const TestConfig& config) {
     }                                                             \
   } while (0)
 
-#define F2S(val) ((int16_t)((val)*65535.0f - 32768.0f))
+#define F2S(val) ((int16_t)((val) * 65535.0f - 32768.0f))
 
   // Normals
 
@@ -581,7 +581,7 @@ void AttributeExplicitSetterTests::Test(const TestConfig& config) {
   pb_printat(0, 0, (char*)config.test_name);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, config.test_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, config.test_name);
 }
 
 void AttributeExplicitSetterTests::Draw(float x, float y, const std::function<void(int)>& attribute_setter,

@@ -148,8 +148,8 @@ static std::string MakeProgrammableTestName(const TextureFormatInfo &format, Tes
   return std::move(ret);
 }
 
-TextureShadowComparatorTests::TextureShadowComparatorTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texture shadow comparator") {
+TextureShadowComparatorTests::TextureShadowComparatorTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Texture shadow comparator", config) {
   auto add_test = [this](uint32_t texture_format, uint32_t surface_format, uint32_t comp_func, uint32_t min_val,
                          uint32_t max_val, uint32_t ref) {
     const TextureFormatInfo &texture_format_info = GetTextureFormatInfo(texture_format);
@@ -473,7 +473,7 @@ void TextureShadowComparatorTests::TestRawValues(uint32_t depth_format, uint32_t
   pb_print("Ref, edges, center: 0x%X\n", ref);
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 void TextureShadowComparatorTests::TestFixedFunction(uint32_t depth_format, bool float_depth, uint32_t texture_format,
@@ -500,7 +500,6 @@ void TextureShadowComparatorTests::TestProgrammable(uint32_t depth_format, bool 
                                                           0.0f, depth_buffer_max_value, M_PI * 0.25f, 1.0f, 200.0f);
   {
     shader->SetLightingEnabled(false);
-    shader->SetUse4ComponentTexcoords();
     shader->SetUseD3DStyleViewport();
     vector_t camera_position = {0.0f, 0.0f, kCameraZ, 1.0f};
     vector_t camera_look_at = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -653,7 +652,7 @@ void TextureShadowComparatorTests::TestProjected(
   host_.SetFinalCombiner1Just(TestHost::SRC_DIFFUSE, true);
 
   auto &stage = host_.GetTextureStage(0);
-  PGRAPHDiffToken diff_token;
+  PGRAPHDiffToken diff_token(true, false);
   p = pb_begin();
   p = pb_push1(p, NV097_SET_SHADOW_COMPARE_FUNC, shadow_comp_function);
   pb_end(p);
@@ -767,5 +766,5 @@ void TextureShadowComparatorTests::TestProjected(
 
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }

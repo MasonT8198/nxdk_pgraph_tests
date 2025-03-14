@@ -1,20 +1,18 @@
 #include "test_host.h"
 
-// clang-format off
-#define _USE_MATH_DEFINES
-#include <cmath>
-// clang-format on
-
 #include <SDL.h>
 #include <SDL_image.h>
 #include <fpng/src/fpng.h>
 #include <strings.h>
+
+#include <cmath>
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wmacro-redefined"
 #include <windows.h>
 #pragma clang diagnostic pop
 
+#include <texture_generator.h>
 #include <xboxkrnl/xboxkrnl.h>
 
 #include <algorithm>
@@ -28,23 +26,26 @@
 #include "xbox_math_d3d.h"
 #include "xbox_math_matrix.h"
 #include "xbox_math_types.h"
+#include "xbox_math_util.h"
 
 using namespace XboxMath;
 
 #define SAVE_Z_AS_PNG
 
 #define MAX_FILE_PATH_SIZE 248
+#define MAX_FILENAME_SIZE 42
 static void SetVertexAttribute(uint32_t index, uint32_t format, uint32_t size, uint32_t stride, const void *data);
 static void ClearVertexAttribute(uint32_t index);
 static void GetCompositeMatrix(matrix4_t &result, const matrix4_t &model_view, const matrix4_t &projection);
 
-TestHost::TestHost(uint32_t framebuffer_width, uint32_t framebuffer_height, uint32_t max_texture_width,
-                   uint32_t max_texture_height, uint32_t max_texture_depth)
+TestHost::TestHost(std::shared_ptr<FTPLogger> ftp_logger, uint32_t framebuffer_width, uint32_t framebuffer_height,
+                   uint32_t max_texture_width, uint32_t max_texture_height, uint32_t max_texture_depth)
     : framebuffer_width_(framebuffer_width),
       framebuffer_height_(framebuffer_height),
       max_texture_width_(max_texture_width),
       max_texture_height_(max_texture_height),
-      max_texture_depth_(max_texture_depth) {
+      max_texture_depth_(max_texture_depth),
+      ftp_logger_{std::move(ftp_logger)} {
   // allocate texture memory buffer large enough for all types
   uint32_t stride = max_texture_width_ * 4;
   max_single_texture_size_ = stride * max_texture_height * max_texture_depth;
@@ -98,7 +99,7 @@ void TestHost::ClearDepthStencilRegion(uint32_t depth_value, uint8_t stencil_val
     height = framebuffer_height_;
   }
 
-  set_depth_stencil_buffer_region(depth_buffer_format_, depth_value, stencil_value, left, top, width, height);
+  pb_set_depth_stencil_buffer_region(depth_buffer_format_, depth_value, stencil_value, left, top, width, height);
 }
 
 void TestHost::ClearColorRegion(uint32_t argb, uint32_t left, uint32_t top, uint32_t width, uint32_t height) const {
@@ -229,7 +230,7 @@ void TestHost::SetVertexBufferAttributes(uint32_t enabled_fields) {
     vertex_buffer_->SetCacheValid();
   }
 
-  // FIXME: Linearize on a per-stage basis instead of basing entirely on stage 0.
+  // TODO: FIXME: Linearize on a per-stage basis instead of basing entirely on stage 0.
   // E.g., if texture unit 0 uses linear and 1 uses swizzle, TEX0 should be linearized, TEX1 should be normalized.
   bool is_linear = texture_stage_[0].enabled_ && texture_stage_[0].IsLinear();
   Vertex *vptr = is_linear ? vertex_buffer_->linear_vertex_buffer_ : vertex_buffer_->normalized_vertex_buffer_;
@@ -249,20 +250,16 @@ void TestHost::SetVertexBufferAttributes(uint32_t enabled_fields) {
 
   set(POSITION, NV2A_VERTEX_ATTR_POSITION, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, vertex_buffer_->position_count_,
       &vptr[0].pos);
-  set(WEIGHT, NV2A_VERTEX_ATTR_WEIGHT, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4, &vptr[0].weight);
+  set(WEIGHT, NV2A_VERTEX_ATTR_WEIGHT, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 1, &vptr[0].weight);
   set(NORMAL, NV2A_VERTEX_ATTR_NORMAL, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 3, &vptr[0].normal);
   set(DIFFUSE, NV2A_VERTEX_ATTR_DIFFUSE, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4, &vptr[0].diffuse);
   set(SPECULAR, NV2A_VERTEX_ATTR_SPECULAR, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4, &vptr[0].specular);
   set(FOG_COORD, NV2A_VERTEX_ATTR_FOG_COORD, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 1, &vptr[0].fog_coord);
   set(POINT_SIZE, NV2A_VERTEX_ATTR_POINT_SIZE, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 1, &vptr[0].point_size);
 
-  //  set(BACK_DIFFUSE, NV2A_VERTEX_ATTR_BACK_DIFFUSE, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4,
-  //  &vptr[0].back_diffuse);
-  ClearVertexAttribute(NV2A_VERTEX_ATTR_BACK_DIFFUSE);
-
-  //  set(BACK_SPECULAR, NV2A_VERTEX_ATTR_BACK_SPECULAR, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4,
-  //  &vptr[0].back_specular);
-  ClearVertexAttribute(NV2A_VERTEX_ATTR_BACK_SPECULAR);
+  set(BACK_DIFFUSE, NV2A_VERTEX_ATTR_BACK_DIFFUSE, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4, &vptr[0].back_diffuse);
+  set(BACK_SPECULAR, NV2A_VERTEX_ATTR_BACK_SPECULAR, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F, 4,
+      &vptr[0].back_specular);
 
   set(TEXCOORD0, NV2A_VERTEX_ATTR_TEXTURE0, NV097_SET_VERTEX_DATA_ARRAY_FORMAT_TYPE_F,
       vertex_buffer_->tex0_coord_count_, &vptr[0].texcoord0);
@@ -337,7 +334,7 @@ void TestHost::DrawInlineBuffer(uint32_t enabled_vertex_fields, DrawPrimitive pr
   auto vertex = vertex_buffer_->Lock();
   for (auto i = 0; i < vertex_buffer_->GetNumVertices(); ++i, ++vertex) {
     if (enabled_vertex_fields & WEIGHT) {
-      SetWeight(vertex->weight[0]);
+      SetWeight(vertex->weight);
     }
     if (enabled_vertex_fields & NORMAL) {
       SetNormal(vertex->normal[0], vertex->normal[1], vertex->normal[2]);
@@ -354,17 +351,48 @@ void TestHost::DrawInlineBuffer(uint32_t enabled_vertex_fields, DrawPrimitive pr
     if (enabled_vertex_fields & POINT_SIZE) {
       SetPointSize(vertex->point_size);
     }
+    if (enabled_vertex_fields & BACK_DIFFUSE) {
+      SetBackDiffuse(vertex->back_diffuse);
+    }
+    if (enabled_vertex_fields & BACK_SPECULAR) {
+      SetBackSpecular(vertex->back_specular);
+    }
+
     if (enabled_vertex_fields & TEXCOORD0) {
-      SetTexCoord0(vertex->texcoord0[0], vertex->texcoord0[1]);
+      if (vertex_buffer_->tex0_coord_count_ == 2) {
+        SetTexCoord0(vertex->texcoord0[0], vertex->texcoord0[1]);
+      } else if (vertex_buffer_->tex0_coord_count_ == 4) {
+        SetTexCoord0(vertex->texcoord0[0], vertex->texcoord0[1], vertex->texcoord0[2], vertex->texcoord0[3]);
+      } else {
+        ASSERT(!"Invalid texcoord count");
+      }
     }
     if (enabled_vertex_fields & TEXCOORD1) {
-      SetTexCoord1(vertex->texcoord1[0], vertex->texcoord1[1]);
+      if (vertex_buffer_->tex1_coord_count_ == 2) {
+        SetTexCoord1(vertex->texcoord1[0], vertex->texcoord1[1]);
+      } else if (vertex_buffer_->tex1_coord_count_ == 4) {
+        SetTexCoord1(vertex->texcoord1[0], vertex->texcoord1[1], vertex->texcoord1[2], vertex->texcoord1[3]);
+      } else {
+        ASSERT(!"Invalid texcoord count");
+      }
     }
     if (enabled_vertex_fields & TEXCOORD2) {
-      SetTexCoord2(vertex->texcoord2[0], vertex->texcoord2[1]);
+      if (vertex_buffer_->tex2_coord_count_ == 2) {
+        SetTexCoord2(vertex->texcoord2[0], vertex->texcoord2[1]);
+      } else if (vertex_buffer_->tex2_coord_count_ == 4) {
+        SetTexCoord2(vertex->texcoord2[0], vertex->texcoord2[1], vertex->texcoord2[2], vertex->texcoord2[3]);
+      } else {
+        ASSERT(!"Invalid texcoord count");
+      }
     }
     if (enabled_vertex_fields & TEXCOORD3) {
-      SetTexCoord3(vertex->texcoord3[0], vertex->texcoord3[1]);
+      if (vertex_buffer_->tex3_coord_count_ == 2) {
+        SetTexCoord3(vertex->texcoord3[0], vertex->texcoord3[1]);
+      } else if (vertex_buffer_->tex3_coord_count_ == 4) {
+        SetTexCoord3(vertex->texcoord3[0], vertex->texcoord3[1], vertex->texcoord3[2], vertex->texcoord3[3]);
+      } else {
+        ASSERT(!"Invalid texcoord count");
+      }
     }
 
     // Setting the position locks in the previously set values and must be done last.
@@ -400,67 +428,72 @@ void TestHost::DrawInlineArray(uint32_t enabled_vertex_fields, DrawPrimitive pri
   for (auto i = 0; i < vertex_buffer_->GetNumVertices(); ++i, ++vertex) {
     // Note: Ordering is important and must follow the NV2A_VERTEX_ATTR_POSITION, ... ordering.
     if (enabled_vertex_fields & POSITION) {
-      auto vals = (uint32_t *)vertex->pos;
       if (vertex_buffer_->position_count_ == 3) {
-        p = pb_push3(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1], vals[2]);
+        p = pb_push3fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->pos);
         num_pushed += 3;
       } else {
-        p = pb_push4(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1], vals[2], vals[3]);
+        p = pb_push4fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->pos);
         num_pushed += 4;
       }
     }
     if (enabled_vertex_fields & WEIGHT) {
-      ASSERT(!"WEIGHT not supported");
+      p = pb_push1f(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->weight);
+      ++num_pushed;
     }
     if (enabled_vertex_fields & NORMAL) {
-      auto vals = (uint32_t *)vertex->normal;
-      p = pb_push3(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1], vals[2]);
+      p = pb_push3fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->normal);
       num_pushed += 3;
     }
     if (enabled_vertex_fields & DIFFUSE) {
-      // TODO: Enable sending as a DWORD by changing the type and size sent via SetVertexBufferAttributes.
-      auto vals = (uint32_t *)vertex->diffuse;
-      p = pb_push4(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1], vals[2], vals[3]);
+      p = pb_push4fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->diffuse);
       num_pushed += 4;
     }
     if (enabled_vertex_fields & SPECULAR) {
-      // TODO: Enable sending as a DWORD by changing the type and size sent via SetVertexBufferAttributes.
-      auto vals = (uint32_t *)vertex->specular;
-      p = pb_push4(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1], vals[2], vals[3]);
+      p = pb_push4fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->specular);
       num_pushed += 4;
     }
     if (enabled_vertex_fields & FOG_COORD) {
-      ASSERT(!"FOG_COORD not supported");
+      p = pb_push1f(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->fog_coord);
+      ++num_pushed;
     }
     if (enabled_vertex_fields & POINT_SIZE) {
-      ASSERT(!"POINT_SIZE not supported");
+      p = pb_push1f(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->point_size);
+      ++num_pushed;
     }
     if (enabled_vertex_fields & BACK_DIFFUSE) {
-      ASSERT(!"BACK_DIFFUSE not supported");
+      p = pb_push4fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->back_diffuse);
+      num_pushed += 4;
     }
     if (enabled_vertex_fields & BACK_SPECULAR) {
-      ASSERT(!"BACK_SPECULAR not supported");
+      p = pb_push4fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vertex->back_specular);
+      num_pushed += 4;
     }
+
+#define PUSH_TEXCOORD(count, field)                                                  \
+  if ((count) == 4) {                                                                \
+    p = pb_push4fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), (field)); \
+    num_pushed += 4;                                                                 \
+  } else if ((count) == 2) {                                                         \
+    p = pb_push2fv(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), (field)); \
+    num_pushed += 2;                                                                 \
+  } else {                                                                           \
+    ASSERT(!"Invalid texcoord count");                                               \
+  }
+
     if (enabled_vertex_fields & TEXCOORD0) {
-      auto vals = (uint32_t *)vertex->texcoord0;
-      p = pb_push2(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1]);
-      num_pushed += 2;
+      PUSH_TEXCOORD(vertex_buffer_->tex0_coord_count_, vertex->texcoord0)
     }
     if (enabled_vertex_fields & TEXCOORD1) {
-      auto vals = (uint32_t *)vertex->texcoord1;
-      p = pb_push2(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1]);
-      num_pushed += 2;
+      PUSH_TEXCOORD(vertex_buffer_->tex1_coord_count_, vertex->texcoord1)
     }
     if (enabled_vertex_fields & TEXCOORD2) {
-      auto vals = (uint32_t *)vertex->texcoord2;
-      p = pb_push2(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1]);
-      num_pushed += 2;
+      PUSH_TEXCOORD(vertex_buffer_->tex2_coord_count_, vertex->texcoord2)
     }
     if (enabled_vertex_fields & TEXCOORD3) {
-      auto vals = (uint32_t *)vertex->texcoord3;
-      p = pb_push2(p, NV2A_SUPPRESS_COMMAND_INCREMENT(NV097_INLINE_ARRAY), vals[0], vals[1]);
-      num_pushed += 2;
+      PUSH_TEXCOORD(vertex_buffer_->tex3_coord_count_, vertex->texcoord3)
     }
+
+#undef PUSH_TEXCOORD
 
     if (num_pushed > kElementsPerPush) {
       pb_end(p);
@@ -571,7 +604,13 @@ void TestHost::SetWeight(float w) const {
 
 void TestHost::SetNormal(float x, float y, float z) const {
   auto p = pb_begin();
-  p = pb_push3(p, NV097_SET_NORMAL3F, *(uint32_t *)&x, *(uint32_t *)&y, *(uint32_t *)&z);
+  p = pb_push3f(p, NV097_SET_NORMAL3F, x, y, z);
+  pb_end(p);
+}
+
+void TestHost::SetNormal(const float *vals) const {
+  auto p = pb_begin();
+  p = pb_push3fv(p, NV097_SET_NORMAL3F, vals);
   pb_end(p);
 }
 
@@ -627,7 +666,19 @@ void TestHost::SetFogCoord(float fc) const {
 
 void TestHost::SetPointSize(float ps) const {
   auto p = pb_begin();
-  p = pb_push1f(p, NV097_SET_POINT_SIZE, ps);
+  p = pb_push1(p, NV097_SET_POINT_SIZE, static_cast<int>(ps * 8.f));
+  pb_end(p);
+}
+
+void TestHost::SetBackDiffuse(uint32_t color) const {
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_VERTEX_DATA4UB + (4 * NV2A_VERTEX_ATTR_BACK_DIFFUSE), color);
+  pb_end(p);
+}
+
+void TestHost::SetBackSpecular(uint32_t color) const {
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_VERTEX_DATA4UB + (4 * NV2A_VERTEX_ATTR_BACK_SPECULAR), color);
   pb_end(p);
 }
 
@@ -768,6 +819,11 @@ void TestHost::EnsureFolderExists(const std::string &folder_path) {
 // Creates output directory if it does not exist
 std::string TestHost::PrepareSaveFile(std::string output_directory, const std::string &filename,
                                       const std::string &extension) {
+  if (filename.length() > MAX_FILENAME_SIZE) {
+    PrintMsg("Filename '%s' > %d characters\n", filename.c_str(), MAX_FILENAME_SIZE);
+    ASSERT(!"File name is too long");
+  }
+
   EnsureFolderExists(output_directory);
 
   output_directory += "\\";
@@ -775,13 +831,14 @@ std::string TestHost::PrepareSaveFile(std::string output_directory, const std::s
   output_directory += extension;
 
   if (output_directory.length() > MAX_FILE_PATH_SIZE) {
+    PrintMsg("File save path '%s' > %d characters\n", output_directory.c_str(), MAX_FILE_PATH_SIZE);
     ASSERT(!"Full save file path is too long.");
   }
 
   return output_directory;
 }
 
-void TestHost::SaveBackBuffer(const std::string &output_directory, const std::string &name) {
+std::string TestHost::SaveBackBuffer(const std::string &output_directory, const std::string &name) {
   auto target_file = PrepareSaveFile(output_directory, name);
 
   auto buffer = pb_agp_access(pb_back_buffer());
@@ -809,30 +866,39 @@ void TestHost::SaveBackBuffer(const std::string &output_directory, const std::st
 
   FILE *pFile = fopen(target_file.c_str(), "wb");
   ASSERT(pFile && "Failed to open output PNG image");
-  if (fwrite(out_buf.data(), 1, out_buf.size(), pFile) != out_buf.size()) {
-    ASSERT(!"Failed to write output PNG image");
+  auto bytes_remaining = out_buf.size();
+  auto data = out_buf.data();
+  while (bytes_remaining > 0) {
+    auto bytes_written = fwrite(data, 1, bytes_remaining, pFile);
+    if (!bytes_written) {
+      ASSERT(!"Failed to write output PNG image");
+    }
+    data += bytes_written;
+    bytes_remaining -= bytes_written;
   }
   if (fclose(pFile)) {
     ASSERT(!"Failed to close output PNG image");
   }
+
+  return target_file;
 }
 
-void TestHost::SaveZBuffer(const std::string &output_directory, const std::string &name) const {
+std::string TestHost::SaveZBuffer(const std::string &output_directory, const std::string &name) const {
   uint32_t depth = depth_buffer_format_ == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? 16 : 32;
 #ifdef SAVE_Z_AS_PNG
   auto format =
       depth_buffer_format_ == NV097_SET_SURFACE_FORMAT_ZETA_Z16 ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_ARGB8888;
-  SaveTexture(output_directory, name, pb_depth_stencil_buffer(), framebuffer_width_, framebuffer_height_,
-              pb_depth_stencil_pitch(), depth, format);
+  return SaveTexture(output_directory, name, pb_depth_stencil_buffer(), framebuffer_width_, framebuffer_height_,
+                     pb_depth_stencil_pitch(), depth, format);
 #else
-  SaveRawTexture(output_directory, name, pb_depth_stencil_buffer(), framebuffer_width_, framebuffer_height_,
-                 framebuffer_width_ * 4, depth);
+  return SaveRawTexture(output_directory, name, pb_depth_stencil_buffer(), framebuffer_width_, framebuffer_height_,
+                        framebuffer_width_ * 4, depth);
 #endif
 }
 
-void TestHost::SaveTexture(const std::string &output_directory, const std::string &name, const uint8_t *texture,
-                           uint32_t width, uint32_t height, uint32_t pitch, uint32_t bits_per_pixel,
-                           SDL_PixelFormatEnum format) {
+std::string TestHost::SaveTexture(const std::string &output_directory, const std::string &name, const uint8_t *texture,
+                                  uint32_t width, uint32_t height, uint32_t pitch, uint32_t bits_per_pixel,
+                                  SDL_PixelFormatEnum format) {
   auto target_file = PrepareSaveFile(output_directory, name);
 
   auto buffer = pb_agp_access(const_cast<void *>(static_cast<const void *>(texture)));
@@ -850,10 +916,13 @@ void TestHost::SaveTexture(const std::string &output_directory, const std::strin
   }
 
   SDL_FreeSurface(surface);
+
+  return target_file;
 }
 
-void TestHost::SaveRawTexture(const std::string &output_directory, const std::string &name, const uint8_t *texture,
-                              uint32_t width, uint32_t height, uint32_t pitch, uint32_t bits_per_pixel) {
+std::string TestHost::SaveRawTexture(const std::string &output_directory, const std::string &name,
+                                     const uint8_t *texture, uint32_t width, uint32_t height, uint32_t pitch,
+                                     uint32_t bits_per_pixel) {
   auto target_file = PrepareSaveFile(output_directory, name, ".raw");
 
   auto buffer = static_cast<uint8_t *>(pb_agp_access(const_cast<void *>(static_cast<const void *>(texture))));
@@ -873,20 +942,25 @@ void TestHost::SaveRawTexture(const std::string &output_directory, const std::st
   }
 
   fclose(f);
+
+  return target_file;
 }
 
-void TestHost::SetupControl0(bool enable_stencil_write, bool w_buffered) const {
+void TestHost::SetupControl0(bool enable_stencil_write, bool w_buffered, bool texture_perspective_enable) const {
   // FIXME: Figure out what to do in cases where there are multiple stages with different conversion needs.
   // Is this supported by hardware?
   bool requires_colorspace_conversion = texture_stage_[0].RequiresColorspaceConversion();
 
   uint32_t control0 = enable_stencil_write ? NV097_SET_CONTROL0_STENCIL_WRITE_ENABLE : 0;
-  control0 |= MASK(NV097_SET_CONTROL0_Z_FORMAT,
-                   depth_buffer_mode_float_ ? NV097_SET_CONTROL0_Z_FORMAT_FLOAT : NV097_SET_CONTROL0_Z_FORMAT_FIXED);
+  control0 |= depth_buffer_mode_float_ ? NV097_SET_CONTROL0_Z_FORMAT_FLOAT : NV097_SET_CONTROL0_Z_FORMAT_FIXED;
   control0 |= MASK(NV097_SET_CONTROL0_Z_PERSPECTIVE_ENABLE, w_buffered ? 1 : 0);
 
+  if (texture_perspective_enable) {
+    control0 |= NV097_SET_CONTROL0_TEXTURE_PERSPECTIVE_ENABLE;
+  }
+
   if (requires_colorspace_conversion) {
-    control0 |= MASK(NV097_SET_CONTROL0_COLOR_SPACE_CONVERT, NV097_SET_CONTROL0_COLOR_SPACE_CONVERT_CRYCB_TO_RGB);
+    control0 |= NV097_SET_CONTROL0_COLOR_SPACE_CONVERT_CRYCB_TO_RGB;
   }
   auto p = pb_begin();
   p = pb_push1(p, NV097_SET_CONTROL0, control0);
@@ -962,8 +1036,8 @@ int TestHost::SetPalette(const uint32_t *palette, PaletteSize size, uint32_t sta
 
 void TestHost::SetPaletteSize(PaletteSize size, uint32_t stage) { texture_stage_[stage].SetPaletteSize(size); }
 
-void TestHost::FinishDraw(bool allow_saving, const std::string &output_directory, const std::string &name,
-                          const std::string &z_buffer_name) {
+void TestHost::FinishDraw(bool allow_saving, const std::string &output_directory, const std::string &suite_name,
+                          const std::string &name, bool save_zbuffer) {
   bool perform_save = allow_saving && save_results_;
   if (!perform_save) {
     pb_printat(0, 55, (char *)"ns");
@@ -979,10 +1053,21 @@ void TestHost::FinishDraw(bool allow_saving, const std::string &output_directory
     // In theory this should wait for all tiles to be rendered before capturing.
     pb_wait_for_vbl();
 
-    SaveBackBuffer(output_directory, name);
+    auto output_path = SaveBackBuffer(output_directory, name);
 
-    if (!z_buffer_name.empty()) {
-      SaveZBuffer(output_directory, z_buffer_name);
+    if (ftp_logger_) {
+      auto remote_filename = suite_name + "::" + output_path.substr(output_directory.length() + 1);
+      ftp_logger_->QueuePutFile(output_path, remote_filename);
+    }
+
+    if (save_zbuffer) {
+      std::string z_buffer_name = name + "_ZB";
+      auto z_buffer_output_path = SaveZBuffer(output_directory, z_buffer_name);
+
+      if (ftp_logger_) {
+        auto remote_filename = suite_name + "::" + z_buffer_output_path.substr(output_directory.length() + 1);
+        ftp_logger_->QueuePutFile(z_buffer_output_path, remote_filename);
+      }
     }
   }
 
@@ -1116,39 +1201,15 @@ void TestHost::BuildDefaultXDKProjectionMatrix(matrix4_t &matrix) const {
 }
 
 void TestHost::ProjectPoint(vector_t &result, const vector_t &world_point) const {
-  vector_t screen_point;
-  VectorMultMatrix(world_point, fixed_function_composite_matrix_, screen_point);
-
-  result[0] = screen_point[0] / screen_point[3];
-  result[1] = screen_point[1] / screen_point[3];
-  result[2] = screen_point[2] / screen_point[3];
-  result[3] = 1.0f;
+  XboxMath::ProjectPoint(world_point, fixed_function_composite_matrix_, result);
 }
 
 void TestHost::UnprojectPoint(vector_t &result, const vector_t &screen_point) const {
-  VectorMultMatrix(screen_point, fixed_function_inverse_composite_matrix_, result);
+  XboxMath::UnprojectPoint(screen_point, fixed_function_inverse_composite_matrix_, result);
 }
 
 void TestHost::UnprojectPoint(vector_t &result, const vector_t &screen_point, float world_z) const {
-  vector_t work;
-  VectorCopyVector(work, screen_point);
-
-  // TODO: Get the near and far plane mappings from the viewport matrix.
-  work[2] = 0.0f;
-  vector_t near_plane;
-  VectorMultMatrix(work, fixed_function_inverse_composite_matrix_, near_plane);
-  VectorEuclidean(near_plane);
-
-  work[2] = 64000.0f;
-  vector_t far_plane;
-  VectorMultMatrix(work, fixed_function_inverse_composite_matrix_, far_plane);
-  VectorEuclidean(far_plane);
-
-  float t = (world_z - near_plane[2]) / (far_plane[2] - near_plane[2]);
-  result[0] = near_plane[0] + (far_plane[0] - near_plane[0]) * t;
-  result[1] = near_plane[1] + (far_plane[1] - near_plane[1]) * t;
-  result[2] = world_z;
-  result[3] = 1.0f;
+  XboxMath::UnprojectPoint(screen_point, fixed_function_inverse_composite_matrix_, world_z, result);
 }
 
 void TestHost::SetWindowClipExclusive(bool exclusive) {
@@ -1177,8 +1238,8 @@ void TestHost::SetViewportScale(float x, float y, float z, float w) {
   pb_end(p);
 }
 
-void TestHost::SetFixedFunctionModelViewMatrix(const matrix4_t model_matrix) {
-  memcpy(fixed_function_model_view_matrix_, model_matrix, sizeof(fixed_function_model_view_matrix_));
+void TestHost::SetFixedFunctionModelViewMatrix(const matrix4_t &model_matrix) {
+  MatrixCopyMatrix(fixed_function_model_view_matrix_, model_matrix);
 
   auto p = pb_begin();
   p = pb_push_transposed_matrix(p, NV097_SET_MODEL_VIEW_MATRIX, fixed_function_model_view_matrix_[0]);
@@ -1193,7 +1254,8 @@ void TestHost::SetFixedFunctionModelViewMatrix(const matrix4_t model_matrix) {
   SetFixedFunctionProjectionMatrix(fixed_function_projection_matrix_);
 }
 
-void TestHost::SetFixedFunctionProjectionMatrix(const matrix4_t projection_matrix) {
+void TestHost::SetFixedFunctionProjectionMatrix(const matrix4_t &projection_matrix) {
+  MatrixCopyMatrix(fixed_function_projection_matrix_, projection_matrix);
   memcpy(fixed_function_projection_matrix_, projection_matrix, sizeof(fixed_function_projection_matrix_));
 
   GetCompositeMatrix(fixed_function_composite_matrix_, fixed_function_model_view_matrix_,
@@ -1203,8 +1265,7 @@ void TestHost::SetFixedFunctionProjectionMatrix(const matrix4_t projection_matri
   p = pb_push_transposed_matrix(p, NV097_SET_COMPOSITE_MATRIX, fixed_function_composite_matrix_[0]);
   pb_end(p);
 
-  MatrixTranspose(fixed_function_composite_matrix_);
-  MatrixInvert(fixed_function_composite_matrix_, fixed_function_inverse_composite_matrix_);
+  BuildInverseCompositeMatrix(fixed_function_composite_matrix_, fixed_function_inverse_composite_matrix_);
 
   fixed_function_matrix_mode_ = MATRIX_MODE_USER;
 
@@ -1267,6 +1328,25 @@ void TestHost::SetBlend(bool enable, uint32_t func, uint32_t sfactor, uint32_t d
     p = pb_push1(p, NV097_SET_BLEND_FUNC_SFACTOR, sfactor);
     p = pb_push1(p, NV097_SET_BLEND_FUNC_DFACTOR, dfactor);
   }
+  pb_end(p);
+}
+
+void TestHost::SetBlendColorConstant(uint32_t color) const {
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_BLEND_COLOR, color);
+  pb_end(p);
+}
+
+void TestHost::SetAlphaReference(uint32_t alpha) const {
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_ALPHA_REF, alpha);
+  pb_end(p);
+}
+
+void TestHost::SetAlphaFunc(bool enable, uint32_t func) const {
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_ALPHA_TEST_ENABLE, enable);
+  p = pb_push1(p, NV097_SET_ALPHA_FUNC, func);
   pb_end(p);
 }
 
@@ -1450,11 +1530,13 @@ uint32_t TestHost::MakeOutputCombiner(TestHost::CombinerDest ab_dst, TestHost::C
 void TestHost::SetFinalCombiner0(TestHost::CombinerSource a_source, bool a_alpha, bool a_invert,
                                  TestHost::CombinerSource b_source, bool b_alpha, bool b_invert,
                                  TestHost::CombinerSource c_source, bool c_alpha, bool c_invert,
-                                 TestHost::CombinerSource d_source, bool d_alpha, bool d_invert) const {
+                                 TestHost::CombinerSource d_source, bool d_alpha, bool d_invert) {
   auto channel = [](CombinerSource src, bool alpha, bool invert) { return src + (alpha << 4) + (invert << 5); };
 
   uint32_t value = (channel(a_source, a_alpha, a_invert) << 24) + (channel(b_source, b_alpha, b_invert) << 16) +
                    (channel(c_source, c_alpha, c_invert) << 8) + channel(d_source, d_alpha, d_invert);
+
+  last_specular_fog_cw0_ = value;
 
   auto p = pb_begin();
   p = pb_push1(p, NV097_SET_COMBINER_SPECULAR_FOG_CW0, value);
@@ -1464,7 +1546,7 @@ void TestHost::SetFinalCombiner0(TestHost::CombinerSource a_source, bool a_alpha
 void TestHost::SetFinalCombiner1(TestHost::CombinerSource e_source, bool e_alpha, bool e_invert,
                                  TestHost::CombinerSource f_source, bool f_alpha, bool f_invert,
                                  TestHost::CombinerSource g_source, bool g_alpha, bool g_invert,
-                                 bool specular_add_invert_r0, bool specular_add_invert_v1, bool specular_clamp) const {
+                                 bool specular_add_invert_r0, bool specular_add_invert_v1, bool specular_clamp) {
   auto channel = [](CombinerSource src, bool alpha, bool invert) { return src + (alpha << 4) + (invert << 5); };
 
   // The V1+R0 sum is not available in CW1.
@@ -1483,8 +1565,19 @@ void TestHost::SetFinalCombiner1(TestHost::CombinerSource e_source, bool e_alpha
     value += NV097_SET_COMBINER_SPECULAR_FOG_CW1_SPECULAR_CLAMP;
   }
 
+  last_specular_fog_cw1_ = value;
+
   auto p = pb_begin();
   p = pb_push1(p, NV097_SET_COMBINER_SPECULAR_FOG_CW1, value);
+  pb_end(p);
+}
+
+void TestHost::RestoreFinalCombinerState(const std::pair<uint32_t, uint32_t> &state) {
+  last_specular_fog_cw0_ = state.first;
+  last_specular_fog_cw1_ = state.second;
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_COMBINER_SPECULAR_FOG_CW0, state.first);
+  p = pb_push1(p, NV097_SET_COMBINER_SPECULAR_FOG_CW1, state.second);
   pb_end(p);
 }
 
@@ -1595,4 +1688,58 @@ static void ClearVertexAttribute(uint32_t index) {
 
 static void GetCompositeMatrix(matrix4_t &result, const matrix4_t &model_view, const matrix4_t &projection) {
   MatrixMultMatrix(model_view, projection, result);
+}
+
+void TestHost::DrawCheckerboardUnproject(uint32_t first_color, uint32_t second_color, uint32_t checker_size) {
+  auto p = pb_begin();
+  p = pb_push1(p, NV097_SET_LIGHTING_ENABLE, false);
+  p = pb_push1(p, NV097_SET_SPECULAR_ENABLE, false);
+  pb_end(p);
+
+  auto combiner_state = GetFinalCombinerState();
+
+  SetFinalCombiner0Just(TestHost::SRC_TEX0);
+  SetFinalCombiner1Just(TestHost::SRC_ZERO, true, true);
+  SetTextureStageEnabled(0, true);
+  SetShaderStageProgram(TestHost::STAGE_2D_PROJECTIVE);
+
+  static constexpr uint32_t kTextureSize = 256;
+
+  auto &texture_stage = GetTextureStage(0);
+  texture_stage.SetFormat(GetTextureFormatInfo(NV097_SET_TEXTURE_FORMAT_COLOR_SZ_A8B8G8R8));
+  texture_stage.SetTextureDimensions(kTextureSize, kTextureSize);
+  SetupTextureStages();
+
+  auto texture_memory = GetTextureMemoryForStage(0);
+  GenerateSwizzledRGBACheckerboard(texture_memory, 0, 0, kTextureSize, kTextureSize, kTextureSize * 4, first_color,
+                                   second_color, checker_size);
+
+  Begin(PRIMITIVE_QUADS);
+  SetTexCoord0(0.0f, 0.0f);
+  vector_t world_point;
+  vector_t screen_point = {0.f, 0.f, 0.0f, 1.0f};
+  UnprojectPoint(world_point, screen_point, 1.f);
+  SetVertex(world_point);
+
+  SetTexCoord0(1.0f, 0.0f);
+  screen_point[0] = GetFramebufferWidthF();
+  UnprojectPoint(world_point, screen_point, 1.f);
+  SetVertex(world_point);
+
+  SetTexCoord0(1.0f, 1.0f);
+  screen_point[1] = GetFramebufferHeightF();
+  UnprojectPoint(world_point, screen_point, 1.f);
+  SetVertex(world_point);
+
+  SetTexCoord0(0.0f, 1.0f);
+  screen_point[0] = 0.f;
+  UnprojectPoint(world_point, screen_point, 1.f);
+  SetVertex(world_point);
+
+  End();
+
+  SetTextureStageEnabled(0, false);
+  SetShaderStageProgram(STAGE_NONE);
+
+  RestoreFinalCombinerState(combiner_state);
 }

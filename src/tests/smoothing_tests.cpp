@@ -20,8 +20,8 @@ static std::string MakeTestName(uint32_t smooth_control) {
   return buf;
 }
 
-SmoothingTests::SmoothingTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Smoothing control") {
+SmoothingTests::SmoothingTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Smoothing control", config) {
   for (auto smooth_control : kSmoothControlValues) {
     const std::string test_name = MakeTestName(smooth_control);
     tests_[test_name] = [this, test_name, smooth_control]() { Test(test_name, smooth_control); };
@@ -235,5 +235,5 @@ void SmoothingTests::Test(const std::string& name, uint32_t smooth_control) {
   pb_printat(10, 32, (char*)"LSPS");
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }

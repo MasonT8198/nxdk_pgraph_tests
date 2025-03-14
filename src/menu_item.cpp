@@ -10,11 +10,7 @@
 #include "debug_output.h"
 #include "tests/test_suite.h"
 
-#ifdef AUTORUN_IMMEDIATELY
-static constexpr uint32_t kAutoTestAllTimeoutMilliseconds = 0;
-#else
 static constexpr uint32_t kAutoTestAllTimeoutMilliseconds = 3000;
-#endif
 static constexpr uint32_t kNumItemsPerPage = 12;
 static constexpr uint32_t kNumItemsPerHalfPage = kNumItemsPerPage >> 1;
 
@@ -123,9 +119,9 @@ bool MenuItem::Deactivate() {
   return true;
 }
 
-void MenuItem::CursorUp() {
+void MenuItem::CursorUp(bool is_repeat) {
   if (active_submenu) {
-    active_submenu->CursorUp();
+    active_submenu->CursorUp(is_repeat);
     return;
   }
 
@@ -136,9 +132,9 @@ void MenuItem::CursorUp() {
   }
 }
 
-void MenuItem::CursorDown() {
+void MenuItem::CursorDown(bool is_repeat) {
   if (active_submenu) {
-    active_submenu->CursorDown();
+    active_submenu->CursorDown(is_repeat);
     return;
   }
 
@@ -149,9 +145,9 @@ void MenuItem::CursorDown() {
   }
 }
 
-void MenuItem::CursorLeft() {
+void MenuItem::CursorLeft(bool is_repeat) {
   if (active_submenu) {
-    active_submenu->CursorLeft();
+    active_submenu->CursorLeft(is_repeat);
     return;
   }
 
@@ -162,9 +158,9 @@ void MenuItem::CursorLeft() {
   }
 }
 
-void MenuItem::CursorRight() {
+void MenuItem::CursorRight(bool is_repeat) {
   if (active_submenu) {
-    active_submenu->CursorRight();
+    active_submenu->CursorRight(is_repeat);
     return;
   }
 
@@ -176,13 +172,13 @@ void MenuItem::CursorRight() {
 
 void MenuItem::CursorUpAndActivate() {
   active_submenu = nullptr;
-  CursorUp();
+  CursorUp(false);
   Activate();
 }
 
 void MenuItem::CursorDownAndActivate() {
   active_submenu = nullptr;
-  CursorDown();
+  CursorDown(false);
   Activate();
 }
 
@@ -224,9 +220,17 @@ bool MenuItemTest::Deactivate() {
   return MenuItem::Deactivate();
 }
 
-void MenuItemTest::CursorUp() { parent->CursorUpAndActivate(); }
+void MenuItemTest::CursorUp(bool is_repeat) {
+  if (!is_repeat) {
+    parent->CursorUpAndActivate();
+  }
+}
 
-void MenuItemTest::CursorDown() { parent->CursorDownAndActivate(); }
+void MenuItemTest::CursorDown(bool is_repeat) {
+  if (!is_repeat) {
+    parent->CursorDownAndActivate();
+  }
+}
 
 MenuItemSuite::MenuItemSuite(const std::shared_ptr<TestSuite> &suite, uint32_t width, uint32_t height)
     : MenuItem(suite->Name(), width, height), suite(suite) {
@@ -249,19 +253,26 @@ void MenuItemSuite::ActivateCurrentSuite() {
 }
 
 MenuItemRoot::MenuItemRoot(const std::vector<std::shared_ptr<TestSuite>> &suites, std::function<void()> on_run_all,
-                           std::function<void()> on_exit, uint32_t width, uint32_t height)
-    : MenuItem("<<root>>", width, height), on_run_all(std::move(on_run_all)), on_exit(std::move(on_exit)) {
-#ifndef DISABLE_AUTORUN
-  submenu.push_back(std::make_shared<MenuItemCallable>(on_run_all, "Run all and exit", width, height));
-#endif  // DISABLE_AUTORUN
+                           std::function<void()> on_exit, uint32_t width, uint32_t height, bool disable_autorun,
+                           bool autorun_immediately)
+    : MenuItem("<<root>>", width, height),
+      on_run_all(std::move(on_run_all)),
+      on_exit(std::move(on_exit)),
+      disable_autorun_(disable_autorun),
+      autorun_immediately_(autorun_immediately) {
+  if (!disable_autorun) {
+    submenu.push_back(std::make_shared<MenuItemCallable>(on_run_all, "Run all and exit", width, height));
+  }
+
   for (auto &suite : suites) {
     auto child = std::make_shared<MenuItemSuite>(suite, width, height);
     child->parent = this;
     submenu.push_back(child);
   }
-#ifdef DISABLE_AUTORUN
-  submenu.push_back(std::make_shared<MenuItemCallable>(on_run_all, "! Run all and exit", width, height));
-#endif  // DISABLE_AUTORUN
+
+  if (disable_autorun) {
+    submenu.push_back(std::make_shared<MenuItemCallable>(on_run_all, "! Run all and exit", width, height));
+  }
 }
 
 void MenuItemRoot::ActivateCurrentSuite() {
@@ -275,22 +286,24 @@ void MenuItemRoot::Draw() {
     timer_valid = true;
   }
 
-#ifndef DISABLE_AUTORUN
-  if (!timer_cancelled) {
-    auto now = std::chrono::high_resolution_clock::now();
-    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
-    if (elapsed > kAutoTestAllTimeoutMilliseconds) {
-      on_run_all();
-      return;
-    }
+  if (!disable_autorun_) {
+    if (!timer_cancelled) {
+      auto now = std::chrono::high_resolution_clock::now();
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
 
-    char run_all[128] = {0};
-    snprintf(run_all, 127, "Run all and exit (automatic in %d ms)", kAutoTestAllTimeoutMilliseconds - elapsed);
-    submenu[0]->name = run_all;
-  } else {
-    submenu[0]->name = "Run all and exit";
+      if (autorun_immediately_ || elapsed > kAutoTestAllTimeoutMilliseconds) {
+        on_run_all();
+        return;
+      }
+
+      char run_all[128] = {0};
+      snprintf(run_all, 127, "Run all and exit (automatic in %d ms)", kAutoTestAllTimeoutMilliseconds - elapsed);
+      submenu[0]->name = run_all;
+    } else {
+      submenu[0]->name = "Run all and exit";
+    }
   }
-#endif  // DISABLE_AUTORUN
+
   MenuItem::Draw();
 }
 
@@ -309,24 +322,24 @@ bool MenuItemRoot::Deactivate() {
   return MenuItem::Deactivate();
 }
 
-void MenuItemRoot::CursorUp() {
+void MenuItemRoot::CursorUp(bool is_repeat) {
   timer_cancelled = true;
-  MenuItem::CursorUp();
+  MenuItem::CursorUp(is_repeat);
 }
 
-void MenuItemRoot::CursorDown() {
+void MenuItemRoot::CursorDown(bool is_repeat) {
   timer_cancelled = true;
-  MenuItem::CursorDown();
+  MenuItem::CursorDown(is_repeat);
 }
 
-void MenuItemRoot::CursorLeft() {
+void MenuItemRoot::CursorLeft(bool is_repeat) {
   timer_cancelled = true;
-  MenuItem::CursorLeft();
+  MenuItem::CursorLeft(is_repeat);
 }
 
-void MenuItemRoot::CursorRight() {
+void MenuItemRoot::CursorRight(bool is_repeat) {
   timer_cancelled = true;
-  MenuItem::CursorRight();
+  MenuItem::CursorRight(is_repeat);
 }
 
 struct MenuItemOption : public MenuItem {
@@ -337,8 +350,8 @@ struct MenuItemOption : public MenuItem {
   inline void UpdateName() { name = label + ": " + values[current_option]; }
 
   void Activate() override;
-  void CursorLeft() override;
-  void CursorRight() override;
+  void CursorLeft(bool is_repeat) override;
+  void CursorRight(bool is_repeat) override;
 
   std::string label;
   std::vector<std::string> values;
@@ -362,37 +375,18 @@ void MenuItemOption::Activate() {
   UpdateName();
 }
 
-void MenuItemOption::CursorLeft() {
+void MenuItemOption::CursorLeft(bool is_repeat) {
   current_option = (current_option - 1) % values.size();
   UpdateName();
 }
 
-void MenuItemOption::CursorRight() { Activate(); }
+void MenuItemOption::CursorRight(bool is_repeat) { Activate(); }
 
 MenuItemOptions::MenuItemOptions(const std::vector<std::shared_ptr<TestSuite>> &suites, std::function<void()> on_exit,
                                  uint32_t width, uint32_t height)
     : MenuItem("<<options>>", width, height), on_exit(std::move(on_exit)) {
   submenu.push_back(
       std::make_shared<MenuItemOption>("Accept", [this](const MenuItemOption &_ignored) { this->on_exit(); }));
-
-  {
-    constexpr uint32_t OPT_SKIP = 0;
-    constexpr uint32_t OPT_RUN = 1;
-    std::vector<std::string> values = {"Skip", "Run"};
-
-    auto on_apply = [suites](const MenuItemOption &opt) {
-      if (opt.current_option == OPT_SKIP) {
-        for (auto &suite : suites) {
-          suite->SetSuspectedCrashHandlingMode(TestSuite::SuspectedCrashHandling::SKIP_ALL);
-        }
-      } else if (opt.current_option == OPT_RUN) {
-        for (auto &suite : suites) {
-          suite->SetSuspectedCrashHandlingMode(TestSuite::SuspectedCrashHandling::RUN_ALL);
-        }
-      }
-    };
-    submenu.push_back(std::make_shared<MenuItemOption>("Previous crashes", values, on_apply));
-  }
 }
 
 void MenuItemOptions::Draw() {
@@ -442,26 +436,26 @@ bool MenuItemOptions::Deactivate() {
   return false;
 }
 
-void MenuItemOptions::CursorUp() {
+void MenuItemOptions::CursorUp(bool is_repeat) {
   timer_cancelled = true;
-  MenuItem::CursorUp();
+  MenuItem::CursorUp(is_repeat);
 }
 
-void MenuItemOptions::CursorDown() {
+void MenuItemOptions::CursorDown(bool is_repeat) {
   timer_cancelled = true;
-  MenuItem::CursorDown();
+  MenuItem::CursorDown(is_repeat);
 }
 
-void MenuItemOptions::CursorLeft() {
+void MenuItemOptions::CursorLeft(bool is_repeat) {
   timer_cancelled = true;
   if (cursor_position > 0) {
-    submenu[cursor_position]->CursorLeft();
+    submenu[cursor_position]->CursorLeft(is_repeat);
   }
 }
 
-void MenuItemOptions::CursorRight() {
+void MenuItemOptions::CursorRight(bool is_repeat) {
   timer_cancelled = true;
   if (cursor_position > 0) {
-    submenu[cursor_position]->CursorRight();
+    submenu[cursor_position]->CursorRight(is_repeat);
   }
 }

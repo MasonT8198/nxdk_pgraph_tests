@@ -21,7 +21,108 @@ static constexpr uint32_t kColorMasks[] = {
         NV097_SET_COLOR_MASK_RED_WRITE_ENABLE | NV097_SET_COLOR_MASK_ALPHA_WRITE_ENABLE,
 };
 
-ClearTests::ClearTests(TestHost& host, std::string output_dir) : TestSuite(host, std::move(output_dir), "Clear") {
+/**
+ * Constructs the test suite and creates test cases.
+ *
+ * @tc C00000000_Depth_n
+ *  Framebuffer result after disabling writing to all color channels and to the
+ *  depth/stencil buffer.
+ *
+ * @tc C00000000_Depth_n_ZB
+ *  Z-buffer result after disabling writing to all color channels and to the
+ *  depth/stencil buffer.
+ *
+ * @tc C00000000_Depth_y
+ *  Framebuffer result after disabling writing to all color channels and
+ *  enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00000000_Depth_y_ZB
+ *  Z-buffer result after disabling writing to all color channels and
+ *  enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00000001_Depth_n
+ *  Framebuffer result after disabling writing to all color channels except blue
+ *  and to the depth/stencil buffer.
+ *
+ * @tc C00000001_Depth_n_ZB
+ *  Z-buffer result after disabling writing to all color channels except blue
+ *  and to the depth/stencil buffer.
+ *
+ * @tc C00000001_Depth_y
+ *  Framebuffer result after disabling writing to all color channels except blue
+ *  enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00000001_Depth_y_ZB
+ *  Z-buffer result after disabling writing to all color channels except blue
+ *  enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00000100_Depth_n
+ *  Framebuffer result after disabling writing to all color channels except
+ *  green and to the depth/stencil buffer.
+ *
+ * @tc C00000100_Depth_n_ZB
+ *  Z-buffer result after disabling writing to all color channels except
+ *  green and to the depth/stencil buffer.
+ *
+ * @tc C00000100_Depth_y
+ *  Framebuffer result after disabling writing to all color channels except
+ *  green and enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00000100_Depth_y_ZB
+ *  Z-buffer result after disabling writing to all color channels except
+ *  green and enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00010000_Depth_n
+ *  Framebuffer result after disabling writing to all color channels except
+ *  red and to the depth/stencil buffer.
+ *
+ * @tc C00010000_Depth_n_ZB
+ *  Z-buffer result after disabling writing to all color channels except
+ *  red and to the depth/stencil buffer.
+ *
+ * @tc C00010000_Depth_y
+ *  Framebuffer result after disabling writing to all color channels except
+ *  red and enabling writes to the depth/stencil buffer.
+ *
+ * @tc C00010000_Depth_y_ZB
+ *  Z-buffer result after disabling writing to all color channels except
+ *  red and enabling writes to the depth/stencil buffer.
+ *
+ * @tc C01000000_Depth_n
+ *  Framebuffer result after disabling writing to all color channels except
+ *  alpha and to the depth/stencil buffer.
+ *
+ * @tc C01000000_Depth_n_ZB
+ *  Z-buffer result after disabling writing to all color channels except
+ *  alpha and to the depth/stencil buffer.
+ *
+ * @tc C01000000_Depth_y
+ *  Framebuffer result after disabling writing to all color channels except
+ *  alpha and enabling writes to the depth/stencil buffer.
+ *
+ * @tc C01000000_Depth_y_ZB
+ *  Z-buffer result after disabling writing to all color channels except
+ *  alpha and enabling writes to the depth/stencil buffer.
+ *
+ * @tc C01010101_Depth_n
+ *  Framebuffer result after enabling writing to all color channels but
+ *  disabling writes to the depth/stencil buffer.
+ *
+ * @tc C01010101_Depth_n_ZB
+ *  Z-buffer result after enabling writing to all color channels but
+ *  disabling writes to the depth/stencil buffer.
+ *
+ * @tc C01010101_Depth_y
+ *  Framebuffer result after enabling writing to all color channels and the
+ *  depth/stencil buffer.
+ *
+ * @tc C01010101_Depth_y_ZB
+ *  Z-buffer result after enabling writing to all color channels and the
+ *  depth/stencil buffer.
+ *
+ */
+ClearTests::ClearTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "Clear", config) {
   for (auto color_write : kColorMasks) {
     for (auto depth_write : {true, false}) {
       std::string name = MakeTestName(color_write, depth_write);
@@ -98,7 +199,7 @@ void ClearTests::Test(uint32_t color_mask, bool depth_write_enable) {
   pb_draw_text_screen();
 
   std::string name = MakeTestName(color_mask, depth_write_enable);
-  host_.FinishDraw(allow_saving_, output_dir_, name, name + "_ZB");
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name, true);
 }
 
 std::string ClearTests::MakeTestName(uint32_t color_mask, bool depth_write_enable) {

@@ -44,8 +44,8 @@ static constexpr TestCase kNonSquareTestCases[] = {
 
 static std::string GetFormatName(TextureFormatDXTTests::CompressedTextureFormat texture_format);
 
-TextureFormatDXTTests::TextureFormatDXTTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texture DXT") {
+TextureFormatDXTTests::TextureFormatDXTTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Texture DXT", config) {
   for (auto &test : kTestCases) {
     tests_[MakeTestName(test.filename, test.format)] = [this, &test]() { Test(test.filename, test.format); };
     tests_[MakeTestName(test.filename, test.format, true)] = [this, &test]() {
@@ -129,7 +129,7 @@ void TextureFormatDXTTests::Test(const char *filename, CompressedTextureFormat t
   pb_print("%s\n", test_name.c_str());
   pb_print("FMT: %s\n", GetFormatName(texture_format).c_str());
   pb_draw_text_screen();
-  host_.FinishDraw(allow_saving_, output_dir_, test_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, test_name);
 }
 
 void TextureFormatDXTTests::TestMipmap(const char *filename,
@@ -209,7 +209,7 @@ void TextureFormatDXTTests::TestMipmap(const char *filename,
   pb_print("%s\n", test_name.c_str());
   pb_print("FMT: %s\n", GetFormatName(texture_format).c_str());
   pb_draw_text_screen();
-  host_.FinishDraw(allow_saving_, output_dir_, test_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, test_name);
 }
 
 static std::string GetFormatName(TextureFormatDXTTests::CompressedTextureFormat texture_format) {

@@ -24,8 +24,8 @@ static constexpr float kWFar = 100.f;
 
 static std::string MakeTestName(const char* prefix, uint32_t mode, bool w_buffered);
 
-ZMinMaxControlTests::ZMinMaxControlTests(TestHost& host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "ZMinMaxControl") {
+ZMinMaxControlTests::ZMinMaxControlTests(TestHost& host, std::string output_dir, const Config& config)
+    : TestSuite(host, std::move(output_dir), "ZMinMaxControl", config) {
   for (auto w_buffered : {false, true}) {
     for (auto cull :
          {NV097_SET_ZMIN_MAX_CONTROL_CULL_NEAR_FAR_EN_FALSE, NV097_SET_ZMIN_MAX_CONTROL_CULL_NEAR_FAR_EN_TRUE}) {
@@ -260,7 +260,7 @@ void ZMinMaxControlTests::Test(const std::string& name, uint32_t mode, bool w_bu
   pb_printat(12, 44, (char*)"W=10");
 
   pb_draw_text_screen();
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 void ZMinMaxControlTests::TestFixed(const std::string& name, uint32_t mode, bool w_buffered) {
@@ -338,7 +338,7 @@ void ZMinMaxControlTests::TestFixed(const std::string& name, uint32_t mode, bool
   pb_printat(12, 44, (char*)"W=10");
 
   pb_draw_text_screen();
-  host_.FinishDraw(allow_saving_, output_dir_, name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, name);
 }
 
 static std::string MakeTestName(const char* prefix, uint32_t mode, bool w_buffered) {

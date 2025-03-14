@@ -31,8 +31,8 @@ static TextureStage::TexGen kTestModes[] = {
     TextureStage::TG_REFLECTION_MAP,
 };
 
-TexgenMatrixTests::TexgenMatrixTests(TestHost &host, std::string output_dir)
-    : TestSuite(host, std::move(output_dir), "Texgen with texture matrix") {
+TexgenMatrixTests::TexgenMatrixTests(TestHost &host, std::string output_dir, const Config &config)
+    : TestSuite(host, std::move(output_dir), "Texgen with texture matrix", config) {
   for (auto mode : kTestModes) {
     std::string name = TestNameForTexGenMode(mode);
     {
@@ -204,7 +204,7 @@ void TexgenMatrixTests::Test(const std::string &test_name, const matrix4_t &matr
   }
   pb_draw_text_screen();
 
-  host_.FinishDraw(allow_saving_, output_dir_, test_name);
+  host_.FinishDraw(allow_saving_, output_dir_, suite_name_, test_name);
 }
 
 static std::string TestNameForTexGenMode(TextureStage::TexGen mode) {
